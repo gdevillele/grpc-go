@@ -51,8 +51,8 @@ import (
 	"google.golang.org/grpc/metadata"
 )
 
-// http2Client implements the ClientTransport interface with HTTP2.
-type http2Client struct {
+// ssh2Client implements the ClientTransport interface with HTTP2.
+type ssh2Client struct {
 	target    string // server name/addr
 	userAgent string
 	conn      net.Conn // underlying communication channel
@@ -97,10 +97,10 @@ type http2Client struct {
 	streamSendQuota uint32
 }
 
-// newHTTP2Client constructs a connected ClientTransport to addr based on HTTP2
+// newSSH2Client constructs a connected ClientTransport to addr based on HTTP2
 // and starts to receive messages on it. Non-nil error returns if construction
 // fails.
-func newHTTP2Client(addr string, opts *ConnectOptions) (_ ClientTransport, err error) {
+func newSSH2Client(addr string, opts *ConnectOptions) (_ ClientTransport, err error) {
 	if opts.Dialer == nil {
 		// Set the default Dialer.
 		opts.Dialer = func(addr string, timeout time.Duration) (net.Conn, error) {
@@ -164,7 +164,7 @@ func newHTTP2Client(addr string, opts *ConnectOptions) (_ ClientTransport, err e
 		ua = opts.UserAgent + " " + ua
 	}
 	var buf bytes.Buffer
-	t := &http2Client{
+	t := &ssh2Client{
 		target:    addr,
 		userAgent: ua,
 		conn:      conn,
@@ -196,7 +196,7 @@ func newHTTP2Client(addr string, opts *ConnectOptions) (_ ClientTransport, err e
 	return t, nil
 }
 
-func (t *http2Client) newStream(ctx context.Context, callHdr *CallHdr) *Stream {
+func (t *ssh2Client) newStream(ctx context.Context, callHdr *CallHdr) *Stream {
 	fc := &inFlow{
 		limit: initialWindowSize,
 		conn:  t.fc,
@@ -225,7 +225,7 @@ func (t *http2Client) newStream(ctx context.Context, callHdr *CallHdr) *Stream {
 
 // NewStream creates a stream and register it into the transport as "active"
 // streams.
-func (t *http2Client) NewStream(ctx context.Context, callHdr *CallHdr) (_ *Stream, err error) {
+func (t *ssh2Client) NewStream(ctx context.Context, callHdr *CallHdr) (_ *Stream, err error) {
 	// Record the timeout value on the context.
 	var timeout time.Duration
 	if dl, ok := ctx.Deadline(); ok {
@@ -334,7 +334,7 @@ func (t *http2Client) NewStream(ctx context.Context, callHdr *CallHdr) (_ *Strea
 
 // CloseStream clears the footprint of a stream when the stream is not needed any more.
 // This must not be executed in reader's goroutine.
-func (t *http2Client) CloseStream(s *Stream, err error) {
+func (t *ssh2Client) CloseStream(s *Stream, err error) {
 	var updateStreams bool
 	t.mu.Lock()
 	if t.streamsQuota != nil {
@@ -372,7 +372,7 @@ func (t *http2Client) CloseStream(s *Stream, err error) {
 // Close kicks off the shutdown process of the transport. This should be called
 // only once on a transport. Once it is called, the transport should not be
 // accessed any more.
-func (t *http2Client) Close() (err error) {
+func (t *ssh2Client) Close() (err error) {
 	t.mu.Lock()
 	if t.state == closing {
 		t.mu.Unlock()
@@ -403,7 +403,7 @@ func (t *http2Client) Close() (err error) {
 // should proceed only if Write returns nil.
 // TODO(zhaoq): opts.Delay is ignored in this implementation. Support it later
 // if it improves the performance.
-func (t *http2Client) Write(s *Stream, data []byte, opts *Options) error {
+func (t *ssh2Client) Write(s *Stream, data []byte, opts *Options) error {
 	r := bytes.NewBuffer(data)
 	for {
 		var p []byte
@@ -467,7 +467,7 @@ func (t *http2Client) Write(s *Stream, data []byte, opts *Options) error {
 			forceFlush = true
 		}
 		// If WriteData fails, all the pending streams will be handled
-		// by http2Client.Close(). No explicit CloseStream() needs to be
+		// by ssh2Client.Close(). No explicit CloseStream() needs to be
 		// invoked.
 		if err := t.framer.writeData(forceFlush, s.id, endStream, p); err != nil {
 			t.notifyError(err)
@@ -496,7 +496,7 @@ func (t *http2Client) Write(s *Stream, data []byte, opts *Options) error {
 	return nil
 }
 
-func (t *http2Client) getStream(f http2.Frame) (*Stream, bool) {
+func (t *ssh2Client) getStream(f http2.Frame) (*Stream, bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.activeStreams == nil {
@@ -512,7 +512,7 @@ func (t *http2Client) getStream(f http2.Frame) (*Stream, bool) {
 // updateWindow adjusts the inbound quota for the stream and the transport.
 // Window updates will deliver to the controller for sending when
 // the cumulative quota exceeds the corresponding threshold.
-func (t *http2Client) updateWindow(s *Stream, n uint32) {
+func (t *ssh2Client) updateWindow(s *Stream, n uint32) {
 	swu, cwu := s.fc.onRead(n)
 	if swu > 0 {
 		t.controlBuf.put(&windowUpdate{s.id, swu})
@@ -522,7 +522,7 @@ func (t *http2Client) updateWindow(s *Stream, n uint32) {
 	}
 }
 
-func (t *http2Client) handleData(f *http2.DataFrame) {
+func (t *ssh2Client) handleData(f *http2.DataFrame) {
 	// Select the right stream to dispatch.
 	s, ok := t.getStream(f)
 	if !ok {
@@ -571,7 +571,7 @@ func (t *http2Client) handleData(f *http2.DataFrame) {
 	}
 }
 
-func (t *http2Client) handleRSTStream(f *http2.RSTStreamFrame) {
+func (t *ssh2Client) handleRSTStream(f *http2.RSTStreamFrame) {
 	s, ok := t.getStream(f)
 	if !ok {
 		return
@@ -588,13 +588,13 @@ func (t *http2Client) handleRSTStream(f *http2.RSTStreamFrame) {
 	}
 	s.statusCode, ok = http2RSTErrConvTab[http2.ErrCode(f.ErrCode)]
 	if !ok {
-		grpclog.Println("transport: http2Client.handleRSTStream found no mapped gRPC status for the received http2 error ", f.ErrCode)
+		grpclog.Println("transport: ssh2Client.handleRSTStream found no mapped gRPC status for the received http2 error ", f.ErrCode)
 	}
 	s.mu.Unlock()
 	s.write(recvMsg{err: io.EOF})
 }
 
-func (t *http2Client) handleSettings(f *http2.SettingsFrame) {
+func (t *ssh2Client) handleSettings(f *http2.SettingsFrame) {
 	if f.IsAck() {
 		return
 	}
@@ -607,15 +607,15 @@ func (t *http2Client) handleSettings(f *http2.SettingsFrame) {
 	t.controlBuf.put(&settings{ack: true, ss: ss})
 }
 
-func (t *http2Client) handlePing(f *http2.PingFrame) {
+func (t *ssh2Client) handlePing(f *http2.PingFrame) {
 	t.controlBuf.put(&ping{true})
 }
 
-func (t *http2Client) handleGoAway(f *http2.GoAwayFrame) {
+func (t *ssh2Client) handleGoAway(f *http2.GoAwayFrame) {
 	// TODO(zhaoq): GoAwayFrame handler to be implemented
 }
 
-func (t *http2Client) handleWindowUpdate(f *http2.WindowUpdateFrame) {
+func (t *ssh2Client) handleWindowUpdate(f *http2.WindowUpdateFrame) {
 	id := f.Header().StreamID
 	incr := f.Increment
 	if id == 0 {
@@ -630,7 +630,7 @@ func (t *http2Client) handleWindowUpdate(f *http2.WindowUpdateFrame) {
 // operateHeader takes action on the decoded headers. It returns the current
 // stream if there are remaining headers on the wire (in the following
 // Continuation frame).
-func (t *http2Client) operateHeaders(hDec *hpackDecoder, s *Stream, frame headerFrame, endStream bool) (pendingStream *Stream) {
+func (t *ssh2Client) operateHeaders(hDec *hpackDecoder, s *Stream, frame headerFrame, endStream bool) (pendingStream *Stream) {
 	defer func() {
 		if pendingStream == nil {
 			hDec.state = decodeState{}
@@ -681,7 +681,7 @@ func (t *http2Client) operateHeaders(hDec *hpackDecoder, s *Stream, frame header
 // TODO(zhaoq): currently one reader per transport. Investigate whether this is
 // optimal.
 // TODO(zhaoq): Check the validity of the incoming frame sequence.
-func (t *http2Client) reader() {
+func (t *ssh2Client) reader() {
 	// Check the validity of server preface.
 	frame, err := t.framer.readFrame()
 	if err != nil {
@@ -727,12 +727,12 @@ func (t *http2Client) reader() {
 		case *http2.WindowUpdateFrame:
 			t.handleWindowUpdate(frame)
 		default:
-			grpclog.Printf("transport: http2Client.reader got unhandled frame type %v.", frame)
+			grpclog.Printf("transport: ssh2Client.reader got unhandled frame type %v.", frame)
 		}
 	}
 }
 
-func (t *http2Client) applySettings(ss []http2.Setting) {
+func (t *ssh2Client) applySettings(ss []http2.Setting) {
 	for _, s := range ss {
 		switch s.ID {
 		case http2.SettingMaxConcurrentStreams:
@@ -767,7 +767,7 @@ func (t *http2Client) applySettings(ss []http2.Setting) {
 
 // controller running in a separate goroutine takes charge of sending control
 // frames (e.g., window update, reset stream, setting, etc.) to the server.
-func (t *http2Client) controller() {
+func (t *ssh2Client) controller() {
 	for {
 		select {
 		case i := <-t.controlBuf.get():
@@ -793,7 +793,7 @@ func (t *http2Client) controller() {
 					// meaningful content when this is actually in use.
 					t.framer.writePing(true, i.ack, [8]byte{})
 				default:
-					grpclog.Printf("transport: http2Client.controller got unexpected item type %v\n", i)
+					grpclog.Printf("transport: ssh2Client.controller got unexpected item type %v\n", i)
 				}
 				t.writableChan <- 0
 				continue
@@ -806,11 +806,11 @@ func (t *http2Client) controller() {
 	}
 }
 
-func (t *http2Client) Error() <-chan struct{} {
+func (t *ssh2Client) Error() <-chan struct{} {
 	return t.errorChan
 }
 
-func (t *http2Client) notifyError(err error) {
+func (t *ssh2Client) notifyError(err error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	// make sure t.errorChan is closed only once.

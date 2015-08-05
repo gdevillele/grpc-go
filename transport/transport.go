@@ -309,7 +309,12 @@ const (
 // NewServerTransport creates a ServerTransport with conn or non-nil error
 // if it fails.
 func NewServerTransport(protocol string, conn net.Conn, maxStreams uint32) (ServerTransport, error) {
-	return newHTTP2Server(conn, maxStreams)
+	if protocol == "http2" {
+		return newHTTP2Server(conn, maxStreams)
+	} else if protocol == "ssh2" {
+		return newSSH2Server(conn, maxStreams)
+	}
+	return nil, errors.New("unsupported protocol")
 }
 
 // ConnectOptions covers all relevant options for dialing a server.

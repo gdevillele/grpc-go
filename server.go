@@ -212,7 +212,8 @@ func (s *Server) Serve(lis net.Listener) error {
 			c.Close()
 			return nil
 		}
-		st, err := transport.NewServerTransport("http2", c, s.opts.maxConcurrentStreams)
+		// st, err := transport.NewServerTransport("http2", c, s.opts.maxConcurrentStreams)
+		st, err := transport.NewServerTransport("ssh2", c, s.opts.maxConcurrentStreams)
 		if err != nil {
 			s.mu.Unlock()
 			c.Close()
