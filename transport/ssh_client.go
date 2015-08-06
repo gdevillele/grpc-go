@@ -34,11 +34,11 @@
 package transport
 
 import (
-	"bytes"
+	// "bytes"
 	"errors"
 	"github.com/Sirupsen/logrus"
-	"io"
-	"math"
+	// "io"
+	// "math"
 	// "net"
 	"sync"
 	//"time"
@@ -46,9 +46,9 @@ import (
 	"github.com/bradfitz/http2"
 	// "github.com/bradfitz/http2/hpack"
 	"golang.org/x/net/context"
-	"google.golang.org/grpc/codes"
+	// "google.golang.org/grpc/codes"
 	// "google.golang.org/grpc/credentials"
-	"google.golang.org/grpc/grpclog"
+	// "google.golang.org/grpc/grpclog"
 	//"google.golang.org/grpc/metadata"
 	"golang.org/x/crypto/ssh"
 
@@ -97,9 +97,9 @@ type ssh2Client struct {
 
 	// authCreds []credentials.Credentials
 
-	mu            sync.Mutex     // guard the following variables
-	state         transportState // the state of underlying connection
-	activeStreams map[uint32]*Stream
+	mu    sync.Mutex     // guard the following variables
+	state transportState // the state of underlying connection
+
 	// The max number of concurrent streams
 	maxStreams int
 	// the per-stream outbound flow control window size set by the peer.
@@ -166,7 +166,6 @@ func newSSH2Client(addr string, opts *ConnectOptions) (_ ClientTransport, err er
 		controlBuf:      newRecvBuffer(),
 		sendQuotaPool:   newQuotaPool(defaultWindowSize),
 		state:           reachable,
-		activeStreams:   make(map[uint32]*Stream),
 		streamSendQuota: defaultWindowSize,
 	}
 
@@ -424,40 +423,40 @@ func (t *ssh2Client) NewStream(ctx context.Context, callHdr *CallHdr) (_ *Stream
 // This must not be executed in reader's goroutine.
 func (t *ssh2Client) CloseStream(s *Stream, err error) {
 
-	// return errors.New("ssh2Client CloseStream WORK IN PROGRESS")
+	return
 
-	var updateStreams bool
-	t.mu.Lock()
-	if t.streamsQuota != nil {
-		updateStreams = true
-	}
-	delete(t.activeStreams, s.id)
-	t.mu.Unlock()
-	if updateStreams {
-		t.streamsQuota.add(1)
-	}
-	s.mu.Lock()
-	if q := s.fc.restoreConn(); q > 0 {
-		t.controlBuf.put(&windowUpdate{0, q})
-	}
-	if s.state == streamDone {
-		s.mu.Unlock()
-		return
-	}
-	if !s.headerDone {
-		close(s.headerChan)
-		s.headerDone = true
-	}
-	s.state = streamDone
-	s.mu.Unlock()
-	// In case stream sending and receiving are invoked in separate
-	// goroutines (e.g., bi-directional streaming), the caller needs
-	// to call cancel on the stream to interrupt the blocking on
-	// other goroutines.
-	s.cancel()
-	if _, ok := err.(StreamError); ok {
-		t.controlBuf.put(&resetStream{s.id, http2.ErrCodeCancel})
-	}
+	// var updateStreams bool
+	// t.mu.Lock()
+	// if t.streamsQuota != nil {
+	// 	updateStreams = true
+	// }
+	// delete(t.activeStreams, s.id)
+	// t.mu.Unlock()
+	// if updateStreams {
+	// 	t.streamsQuota.add(1)
+	// }
+	// s.mu.Lock()
+	// if q := s.fc.restoreConn(); q > 0 {
+	// 	t.controlBuf.put(&windowUpdate{0, q})
+	// }
+	// if s.state == streamDone {
+	// 	s.mu.Unlock()
+	// 	return
+	// }
+	// if !s.headerDone {
+	// 	close(s.headerChan)
+	// 	s.headerDone = true
+	// }
+	// s.state = streamDone
+	// s.mu.Unlock()
+	// // In case stream sending and receiving are invoked in separate
+	// // goroutines (e.g., bi-directional streaming), the caller needs
+	// // to call cancel on the stream to interrupt the blocking on
+	// // other goroutines.
+	// s.cancel()
+	// if _, ok := err.(StreamError); ok {
+	// 	t.controlBuf.put(&resetStream{s.id, http2.ErrCodeCancel})
+	// }
 }
 
 // Close kicks off the shutdown process of the transport. This should be called
@@ -465,32 +464,32 @@ func (t *ssh2Client) CloseStream(s *Stream, err error) {
 // accessed any more.
 func (t *ssh2Client) Close() (err error) {
 
-	//return errors.New("ssh2Client CloseStream WORK IN PROGRESS")
+	return errors.New("ssh2Client Close WORK IN PROGRESS")
 
-	t.mu.Lock()
-	if t.state == closing {
-		t.mu.Unlock()
-		return errors.New("transport: Close() was already called")
-	}
-	t.state = closing
-	t.mu.Unlock()
-	close(t.shutdownChan)
-	err = t.conn.Close()
-	t.mu.Lock()
-	streams := t.activeStreams
-	t.activeStreams = nil
-	t.mu.Unlock()
-	// Notify all active streams.
-	for _, s := range streams {
-		s.mu.Lock()
-		if !s.headerDone {
-			close(s.headerChan)
-			s.headerDone = true
-		}
-		s.mu.Unlock()
-		s.write(recvMsg{err: ErrConnClosing})
-	}
-	return
+	// t.mu.Lock()
+	// if t.state == closing {
+	// 	t.mu.Unlock()
+	// 	return errors.New("transport: Close() was already called")
+	// }
+	// t.state = closing
+	// t.mu.Unlock()
+	// close(t.shutdownChan)
+	// err = t.conn.Close()
+	// t.mu.Lock()
+	// streams := t.activeStreams
+	// t.activeStreams = nil
+	// t.mu.Unlock()
+	// // Notify all active streams.
+	// for _, s := range streams {
+	// 	s.mu.Lock()
+	// 	if !s.headerDone {
+	// 		close(s.headerChan)
+	// 		s.headerDone = true
+	// 	}
+	// 	s.mu.Unlock()
+	// 	s.write(recvMsg{err: ErrConnClosing})
+	// }
+	// return
 }
 
 // Write formats the data into HTTP2 data frame(s) and sends it out. The caller
@@ -499,213 +498,214 @@ func (t *ssh2Client) Close() (err error) {
 // if it improves the performance.
 func (t *ssh2Client) Write(s *Stream, data []byte, opts *Options) error {
 
-	// return errors.New("ssh2Client Write WORK IN PROGRESS")
+	return errors.New("ssh2Client Write WORK IN PROGRESS")
 
-	r := bytes.NewBuffer(data)
-	for {
-		var p []byte
-		if r.Len() > 0 {
-			size := http2MaxFrameLen
-			s.sendQuotaPool.add(0)
-			// Wait until the stream has some quota to send the data.
-			sq, err := wait(s.ctx, t.shutdownChan, s.sendQuotaPool.acquire())
-			if err != nil {
-				return err
-			}
-			t.sendQuotaPool.add(0)
-			// Wait until the transport has some quota to send the data.
-			tq, err := wait(s.ctx, t.shutdownChan, t.sendQuotaPool.acquire())
-			if err != nil {
-				if _, ok := err.(StreamError); ok {
-					t.sendQuotaPool.cancel()
-				}
-				return err
-			}
-			if sq < size {
-				size = sq
-			}
-			if tq < size {
-				size = tq
-			}
-			p = r.Next(size)
-			ps := len(p)
-			if ps < sq {
-				// Overbooked stream quota. Return it back.
-				s.sendQuotaPool.add(sq - ps)
-			}
-			if ps < tq {
-				// Overbooked transport quota. Return it back.
-				t.sendQuotaPool.add(tq - ps)
-			}
-		}
-		var (
-			endStream  bool
-			forceFlush bool
-		)
-		if opts.Last && r.Len() == 0 {
-			endStream = true
-		}
-		// Indicate there is a writer who is about to write a data frame.
-		t.framer.adjustNumWriters(1)
-		// Got some quota. Try to acquire writing privilege on the transport.
-		if _, err := wait(s.ctx, t.shutdownChan, t.writableChan); err != nil {
-			if t.framer.adjustNumWriters(-1) == 0 {
-				// This writer is the last one in this batch and has the
-				// responsibility to flush the buffered frames. It queues
-				// a flush request to controlBuf instead of flushing directly
-				// in order to avoid the race with other writing or flushing.
-				t.controlBuf.put(&flushIO{})
-			}
-			return err
-		}
-		if r.Len() == 0 && t.framer.adjustNumWriters(0) == 1 {
-			// Do a force flush iff this is last frame for the entire gRPC message
-			// and the caller is the only writer at this moment.
-			forceFlush = true
-		}
-		// If WriteData fails, all the pending streams will be handled
-		// by ssh2Client.Close(). No explicit CloseStream() needs to be
-		// invoked.
-		if err := t.framer.writeData(forceFlush, s.id, endStream, p); err != nil {
-			t.notifyError(err)
-			return ConnectionErrorf("transport: %v", err)
-		}
-		if t.framer.adjustNumWriters(-1) == 0 {
-			t.framer.flushWrite()
-		}
-		t.writableChan <- 0
-		if r.Len() == 0 {
-			break
-		}
-	}
-	if !opts.Last {
-		return nil
-	}
-	s.mu.Lock()
-	if s.state != streamDone {
-		if s.state == streamReadDone {
-			s.state = streamDone
-		} else {
-			s.state = streamWriteDone
-		}
-	}
-	s.mu.Unlock()
-	return nil
+	// r := bytes.NewBuffer(data)
+	// for {
+	// 	var p []byte
+	// 	if r.Len() > 0 {
+	// 		size := http2MaxFrameLen
+	// 		s.sendQuotaPool.add(0)
+	// 		// Wait until the stream has some quota to send the data.
+	// 		sq, err := wait(s.ctx, t.shutdownChan, s.sendQuotaPool.acquire())
+	// 		if err != nil {
+	// 			return err
+	// 		}
+	// 		t.sendQuotaPool.add(0)
+	// 		// Wait until the transport has some quota to send the data.
+	// 		tq, err := wait(s.ctx, t.shutdownChan, t.sendQuotaPool.acquire())
+	// 		if err != nil {
+	// 			if _, ok := err.(StreamError); ok {
+	// 				t.sendQuotaPool.cancel()
+	// 			}
+	// 			return err
+	// 		}
+	// 		if sq < size {
+	// 			size = sq
+	// 		}
+	// 		if tq < size {
+	// 			size = tq
+	// 		}
+	// 		p = r.Next(size)
+	// 		ps := len(p)
+	// 		if ps < sq {
+	// 			// Overbooked stream quota. Return it back.
+	// 			s.sendQuotaPool.add(sq - ps)
+	// 		}
+	// 		if ps < tq {
+	// 			// Overbooked transport quota. Return it back.
+	// 			t.sendQuotaPool.add(tq - ps)
+	// 		}
+	// 	}
+	// 	var (
+	// 		endStream  bool
+	// 		forceFlush bool
+	// 	)
+	// 	if opts.Last && r.Len() == 0 {
+	// 		endStream = true
+	// 	}
+	// 	// Indicate there is a writer who is about to write a data frame.
+	// 	t.framer.adjustNumWriters(1)
+	// 	// Got some quota. Try to acquire writing privilege on the transport.
+	// 	if _, err := wait(s.ctx, t.shutdownChan, t.writableChan); err != nil {
+	// 		if t.framer.adjustNumWriters(-1) == 0 {
+	// 			// This writer is the last one in this batch and has the
+	// 			// responsibility to flush the buffered frames. It queues
+	// 			// a flush request to controlBuf instead of flushing directly
+	// 			// in order to avoid the race with other writing or flushing.
+	// 			t.controlBuf.put(&flushIO{})
+	// 		}
+	// 		return err
+	// 	}
+	// 	if r.Len() == 0 && t.framer.adjustNumWriters(0) == 1 {
+	// 		// Do a force flush iff this is last frame for the entire gRPC message
+	// 		// and the caller is the only writer at this moment.
+	// 		forceFlush = true
+	// 	}
+	// 	// If WriteData fails, all the pending streams will be handled
+	// 	// by ssh2Client.Close(). No explicit CloseStream() needs to be
+	// 	// invoked.
+	// 	if err := t.framer.writeData(forceFlush, s.id, endStream, p); err != nil {
+	// 		t.notifyError(err)
+	// 		return ConnectionErrorf("transport: %v", err)
+	// 	}
+	// 	if t.framer.adjustNumWriters(-1) == 0 {
+	// 		t.framer.flushWrite()
+	// 	}
+	// 	t.writableChan <- 0
+	// 	if r.Len() == 0 {
+	// 		break
+	// 	}
+	// }
+	// if !opts.Last {
+	// 	return nil
+	// }
+	// s.mu.Lock()
+	// if s.state != streamDone {
+	// 	if s.state == streamReadDone {
+	// 		s.state = streamDone
+	// 	} else {
+	// 		s.state = streamWriteDone
+	// 	}
+	// }
+	// s.mu.Unlock()
+	// return nil
 }
 
 func (t *ssh2Client) getStream(f http2.Frame) (*Stream, bool) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	if t.activeStreams == nil {
-		// The transport is closing.
-		return nil, false
-	}
-	if s, ok := t.activeStreams[f.Header().StreamID]; ok {
-		return s, true
-	}
 	return nil, false
+	// t.mu.Lock()
+	// defer t.mu.Unlock()
+	// if t.activeStreams == nil {
+	// 	// The transport is closing.
+	// 	return nil, false
+	// }
+	// if s, ok := t.activeStreams[f.Header().StreamID]; ok {
+	// 	return s, true
+	// }
+	// return nil, false
 }
 
 // updateWindow adjusts the inbound quota for the stream and the transport.
 // Window updates will deliver to the controller for sending when
 // the cumulative quota exceeds the corresponding threshold.
 func (t *ssh2Client) updateWindow(s *Stream, n uint32) {
-	swu, cwu := s.fc.onRead(n)
-	if swu > 0 {
-		t.controlBuf.put(&windowUpdate{s.id, swu})
-	}
-	if cwu > 0 {
-		t.controlBuf.put(&windowUpdate{0, cwu})
-	}
+	// swu, cwu := s.fc.onRead(n)
+	// if swu > 0 {
+	// 	t.controlBuf.put(&windowUpdate{s.id, swu})
+	// }
+	// if cwu > 0 {
+	// 	t.controlBuf.put(&windowUpdate{0, cwu})
+	// }
 }
 
 func (t *ssh2Client) handleData(f *http2.DataFrame) {
-	// Select the right stream to dispatch.
-	s, ok := t.getStream(f)
-	if !ok {
-		return
-	}
-	size := len(f.Data())
-	if size > 0 {
-		if err := s.fc.onData(uint32(size)); err != nil {
-			if _, ok := err.(ConnectionError); ok {
-				t.notifyError(err)
-				return
-			}
-			s.mu.Lock()
-			if s.state == streamDone {
-				s.mu.Unlock()
-				return
-			}
-			s.state = streamDone
-			s.statusCode = codes.Internal
-			s.statusDesc = err.Error()
-			s.mu.Unlock()
-			s.write(recvMsg{err: io.EOF})
-			t.controlBuf.put(&resetStream{s.id, http2.ErrCodeFlowControl})
-			return
-		}
-		// TODO(bradfitz, zhaoq): A copy is required here because there is no
-		// guarantee f.Data() is consumed before the arrival of next frame.
-		// Can this copy be eliminated?
-		data := make([]byte, size)
-		copy(data, f.Data())
-		s.write(recvMsg{data: data})
-	}
-	// The server has closed the stream without sending trailers.  Record that
-	// the read direction is closed, and set the status appropriately.
-	if f.FrameHeader.Flags.Has(http2.FlagDataEndStream) {
-		s.mu.Lock()
-		if s.state == streamWriteDone {
-			s.state = streamDone
-		} else {
-			s.state = streamReadDone
-		}
-		s.statusCode = codes.Internal
-		s.statusDesc = "server closed the stream without sending trailers"
-		s.mu.Unlock()
-		s.write(recvMsg{err: io.EOF})
-	}
+	// // Select the right stream to dispatch.
+	// s, ok := t.getStream(f)
+	// if !ok {
+	// 	return
+	// }
+	// size := len(f.Data())
+	// if size > 0 {
+	// 	if err := s.fc.onData(uint32(size)); err != nil {
+	// 		if _, ok := err.(ConnectionError); ok {
+	// 			t.notifyError(err)
+	// 			return
+	// 		}
+	// 		s.mu.Lock()
+	// 		if s.state == streamDone {
+	// 			s.mu.Unlock()
+	// 			return
+	// 		}
+	// 		s.state = streamDone
+	// 		s.statusCode = codes.Internal
+	// 		s.statusDesc = err.Error()
+	// 		s.mu.Unlock()
+	// 		s.write(recvMsg{err: io.EOF})
+	// 		t.controlBuf.put(&resetStream{s.id, http2.ErrCodeFlowControl})
+	// 		return
+	// 	}
+	// 	// TODO(bradfitz, zhaoq): A copy is required here because there is no
+	// 	// guarantee f.Data() is consumed before the arrival of next frame.
+	// 	// Can this copy be eliminated?
+	// 	data := make([]byte, size)
+	// 	copy(data, f.Data())
+	// 	s.write(recvMsg{data: data})
+	// }
+	// // The server has closed the stream without sending trailers.  Record that
+	// // the read direction is closed, and set the status appropriately.
+	// if f.FrameHeader.Flags.Has(http2.FlagDataEndStream) {
+	// 	s.mu.Lock()
+	// 	if s.state == streamWriteDone {
+	// 		s.state = streamDone
+	// 	} else {
+	// 		s.state = streamReadDone
+	// 	}
+	// 	s.statusCode = codes.Internal
+	// 	s.statusDesc = "server closed the stream without sending trailers"
+	// 	s.mu.Unlock()
+	// 	s.write(recvMsg{err: io.EOF})
+	// }
 }
 
 func (t *ssh2Client) handleRSTStream(f *http2.RSTStreamFrame) {
-	s, ok := t.getStream(f)
-	if !ok {
-		return
-	}
-	s.mu.Lock()
-	if s.state == streamDone {
-		s.mu.Unlock()
-		return
-	}
-	s.state = streamDone
-	if !s.headerDone {
-		close(s.headerChan)
-		s.headerDone = true
-	}
-	s.statusCode, ok = http2RSTErrConvTab[http2.ErrCode(f.ErrCode)]
-	if !ok {
-		grpclog.Println("transport: ssh2Client.handleRSTStream found no mapped gRPC status for the received http2 error ", f.ErrCode)
-	}
-	s.mu.Unlock()
-	s.write(recvMsg{err: io.EOF})
+	// s, ok := t.getStream(f)
+	// if !ok {
+	// 	return
+	// }
+	// s.mu.Lock()
+	// if s.state == streamDone {
+	// 	s.mu.Unlock()
+	// 	return
+	// }
+	// s.state = streamDone
+	// if !s.headerDone {
+	// 	close(s.headerChan)
+	// 	s.headerDone = true
+	// }
+	// s.statusCode, ok = http2RSTErrConvTab[http2.ErrCode(f.ErrCode)]
+	// if !ok {
+	// 	grpclog.Println("transport: ssh2Client.handleRSTStream found no mapped gRPC status for the received http2 error ", f.ErrCode)
+	// }
+	// s.mu.Unlock()
+	// s.write(recvMsg{err: io.EOF})
 }
 
 func (t *ssh2Client) handleSettings(f *http2.SettingsFrame) {
-	if f.IsAck() {
-		return
-	}
-	var ss []http2.Setting
-	f.ForeachSetting(func(s http2.Setting) error {
-		ss = append(ss, s)
-		return nil
-	})
-	// The settings will be applied once the ack is sent.
-	t.controlBuf.put(&settings{ack: true, ss: ss})
+	// if f.IsAck() {
+	// 	return
+	// }
+	// var ss []http2.Setting
+	// f.ForeachSetting(func(s http2.Setting) error {
+	// 	ss = append(ss, s)
+	// 	return nil
+	// })
+	// // The settings will be applied once the ack is sent.
+	// t.controlBuf.put(&settings{ack: true, ss: ss})
 }
 
 func (t *ssh2Client) handlePing(f *http2.PingFrame) {
-	t.controlBuf.put(&ping{true})
+	// t.controlBuf.put(&ping{true})
 }
 
 func (t *ssh2Client) handleGoAway(f *http2.GoAwayFrame) {
@@ -713,63 +713,64 @@ func (t *ssh2Client) handleGoAway(f *http2.GoAwayFrame) {
 }
 
 func (t *ssh2Client) handleWindowUpdate(f *http2.WindowUpdateFrame) {
-	id := f.Header().StreamID
-	incr := f.Increment
-	if id == 0 {
-		t.sendQuotaPool.add(int(incr))
-		return
-	}
-	if s, ok := t.getStream(f); ok {
-		s.sendQuotaPool.add(int(incr))
-	}
+	// id := f.Header().StreamID
+	// incr := f.Increment
+	// if id == 0 {
+	// 	t.sendQuotaPool.add(int(incr))
+	// 	return
+	// }
+	// if s, ok := t.getStream(f); ok {
+	// 	s.sendQuotaPool.add(int(incr))
+	// }
 }
 
 // operateHeader takes action on the decoded headers. It returns the current
 // stream if there are remaining headers on the wire (in the following
 // Continuation frame).
 func (t *ssh2Client) operateHeaders(hDec *hpackDecoder, s *Stream, frame headerFrame, endStream bool) (pendingStream *Stream) {
-	defer func() {
-		if pendingStream == nil {
-			hDec.state = decodeState{}
-		}
-	}()
-	endHeaders, err := hDec.decodeClientHTTP2Headers(frame)
-	if s == nil {
-		// s has been closed.
-		return nil
-	}
-	if err != nil {
-		s.write(recvMsg{err: err})
-		// Something wrong. Stops reading even when there is remaining.
-		return nil
-	}
-	if !endHeaders {
-		return s
-	}
-
-	s.mu.Lock()
-	if !s.headerDone {
-		if !endStream && len(hDec.state.mdata) > 0 {
-			s.header = hDec.state.mdata
-		}
-		close(s.headerChan)
-		s.headerDone = true
-	}
-	if !endStream || s.state == streamDone {
-		s.mu.Unlock()
-		return nil
-	}
-
-	if len(hDec.state.mdata) > 0 {
-		s.trailer = hDec.state.mdata
-	}
-	s.state = streamDone
-	s.statusCode = hDec.state.statusCode
-	s.statusDesc = hDec.state.statusDesc
-	s.mu.Unlock()
-
-	s.write(recvMsg{err: io.EOF})
 	return nil
+	// defer func() {
+	// 	if pendingStream == nil {
+	// 		hDec.state = decodeState{}
+	// 	}
+	// }()
+	// endHeaders, err := hDec.decodeClientHTTP2Headers(frame)
+	// if s == nil {
+	// 	// s has been closed.
+	// 	return nil
+	// }
+	// if err != nil {
+	// 	s.write(recvMsg{err: err})
+	// 	// Something wrong. Stops reading even when there is remaining.
+	// 	return nil
+	// }
+	// if !endHeaders {
+	// 	return s
+	// }
+
+	// s.mu.Lock()
+	// if !s.headerDone {
+	// 	if !endStream && len(hDec.state.mdata) > 0 {
+	// 		s.header = hDec.state.mdata
+	// 	}
+	// 	close(s.headerChan)
+	// 	s.headerDone = true
+	// }
+	// if !endStream || s.state == streamDone {
+	// 	s.mu.Unlock()
+	// 	return nil
+	// }
+
+	// if len(hDec.state.mdata) > 0 {
+	// 	s.trailer = hDec.state.mdata
+	// }
+	// s.state = streamDone
+	// s.statusCode = hDec.state.statusCode
+	// s.statusDesc = hDec.state.statusDesc
+	// s.mu.Unlock()
+
+	// s.write(recvMsg{err: io.EOF})
+	// return nil
 }
 
 // reader runs as a separate goroutine in charge of reading data from network
@@ -780,127 +781,127 @@ func (t *ssh2Client) operateHeaders(hDec *hpackDecoder, s *Stream, frame headerF
 // TODO(zhaoq): Check the validity of the incoming frame sequence.
 func (t *ssh2Client) reader() {
 	// Check the validity of server preface.
-	frame, err := t.framer.readFrame()
-	if err != nil {
-		t.notifyError(err)
-		return
-	}
-	sf, ok := frame.(*http2.SettingsFrame)
-	if !ok {
-		t.notifyError(err)
-		return
-	}
-	t.handleSettings(sf)
+	// frame, err := t.framer.readFrame()
+	// if err != nil {
+	// 	t.notifyError(err)
+	// 	return
+	// }
+	// sf, ok := frame.(*http2.SettingsFrame)
+	// if !ok {
+	// 	t.notifyError(err)
+	// 	return
+	// }
+	// t.handleSettings(sf)
 
-	hDec := newHPACKDecoder()
-	var curStream *Stream
-	// loop to keep reading incoming messages on this transport.
-	for {
-		frame, err := t.framer.readFrame()
-		if err != nil {
-			t.notifyError(err)
-			return
-		}
-		switch frame := frame.(type) {
-		case *http2.HeadersFrame:
-			// operateHeaders has to be invoked regardless the value of curStream
-			// because the HPACK decoder needs to be updated using the received
-			// headers.
-			curStream, _ = t.getStream(frame)
-			endStream := frame.Header().Flags.Has(http2.FlagHeadersEndStream)
-			curStream = t.operateHeaders(hDec, curStream, frame, endStream)
-		case *http2.ContinuationFrame:
-			curStream = t.operateHeaders(hDec, curStream, frame, false)
-		case *http2.DataFrame:
-			t.handleData(frame)
-		case *http2.RSTStreamFrame:
-			t.handleRSTStream(frame)
-		case *http2.SettingsFrame:
-			t.handleSettings(frame)
-		case *http2.PingFrame:
-			t.handlePing(frame)
-		case *http2.GoAwayFrame:
-			t.handleGoAway(frame)
-		case *http2.WindowUpdateFrame:
-			t.handleWindowUpdate(frame)
-		default:
-			grpclog.Printf("transport: ssh2Client.reader got unhandled frame type %v.", frame)
-		}
-	}
+	// hDec := newHPACKDecoder()
+	// var curStream *Stream
+	// // loop to keep reading incoming messages on this transport.
+	// for {
+	// 	frame, err := t.framer.readFrame()
+	// 	if err != nil {
+	// 		t.notifyError(err)
+	// 		return
+	// 	}
+	// 	switch frame := frame.(type) {
+	// 	case *http2.HeadersFrame:
+	// 		// operateHeaders has to be invoked regardless the value of curStream
+	// 		// because the HPACK decoder needs to be updated using the received
+	// 		// headers.
+	// 		curStream, _ = t.getStream(frame)
+	// 		endStream := frame.Header().Flags.Has(http2.FlagHeadersEndStream)
+	// 		curStream = t.operateHeaders(hDec, curStream, frame, endStream)
+	// 	case *http2.ContinuationFrame:
+	// 		curStream = t.operateHeaders(hDec, curStream, frame, false)
+	// 	case *http2.DataFrame:
+	// 		t.handleData(frame)
+	// 	case *http2.RSTStreamFrame:
+	// 		t.handleRSTStream(frame)
+	// 	case *http2.SettingsFrame:
+	// 		t.handleSettings(frame)
+	// 	case *http2.PingFrame:
+	// 		t.handlePing(frame)
+	// 	case *http2.GoAwayFrame:
+	// 		t.handleGoAway(frame)
+	// 	case *http2.WindowUpdateFrame:
+	// 		t.handleWindowUpdate(frame)
+	// 	default:
+	// 		grpclog.Printf("transport: ssh2Client.reader got unhandled frame type %v.", frame)
+	// 	}
+	// }
 }
 
 func (t *ssh2Client) applySettings(ss []http2.Setting) {
-	for _, s := range ss {
-		switch s.ID {
-		case http2.SettingMaxConcurrentStreams:
-			// TODO(zhaoq): This is a hack to avoid significant refactoring of the
-			// code to deal with the unrealistic int32 overflow. Probably will try
-			// to find a better way to handle this later.
-			if s.Val > math.MaxInt32 {
-				s.Val = math.MaxInt32
-			}
-			t.mu.Lock()
-			reset := t.streamsQuota != nil
-			if !reset {
-				t.streamsQuota = newQuotaPool(int(s.Val) - len(t.activeStreams))
-			}
-			ms := t.maxStreams
-			t.maxStreams = int(s.Val)
-			t.mu.Unlock()
-			if reset {
-				t.streamsQuota.reset(int(s.Val) - ms)
-			}
-		case http2.SettingInitialWindowSize:
-			t.mu.Lock()
-			for _, stream := range t.activeStreams {
-				// Adjust the sending quota for each stream.
-				stream.sendQuotaPool.reset(int(s.Val - t.streamSendQuota))
-			}
-			t.streamSendQuota = s.Val
-			t.mu.Unlock()
-		}
-	}
+	// for _, s := range ss {
+	// 	switch s.ID {
+	// 	case http2.SettingMaxConcurrentStreams:
+	// 		// TODO(zhaoq): This is a hack to avoid significant refactoring of the
+	// 		// code to deal with the unrealistic int32 overflow. Probably will try
+	// 		// to find a better way to handle this later.
+	// 		if s.Val > math.MaxInt32 {
+	// 			s.Val = math.MaxInt32
+	// 		}
+	// 		t.mu.Lock()
+	// 		reset := t.streamsQuota != nil
+	// 		if !reset {
+	// 			t.streamsQuota = newQuotaPool(int(s.Val) - len(t.activeStreams))
+	// 		}
+	// 		ms := t.maxStreams
+	// 		t.maxStreams = int(s.Val)
+	// 		t.mu.Unlock()
+	// 		if reset {
+	// 			t.streamsQuota.reset(int(s.Val) - ms)
+	// 		}
+	// 	case http2.SettingInitialWindowSize:
+	// 		t.mu.Lock()
+	// 		for _, stream := range t.activeStreams {
+	// 			// Adjust the sending quota for each stream.
+	// 			stream.sendQuotaPool.reset(int(s.Val - t.streamSendQuota))
+	// 		}
+	// 		t.streamSendQuota = s.Val
+	// 		t.mu.Unlock()
+	// 	}
+	// }
 }
 
 // controller running in a separate goroutine takes charge of sending control
 // frames (e.g., window update, reset stream, setting, etc.) to the server.
 func (t *ssh2Client) controller() {
-	for {
-		select {
-		case i := <-t.controlBuf.get():
-			t.controlBuf.load()
-			select {
-			case <-t.writableChan:
-				switch i := i.(type) {
-				case *windowUpdate:
-					t.framer.writeWindowUpdate(true, i.streamID, i.increment)
-				case *settings:
-					if i.ack {
-						t.framer.writeSettingsAck(true)
-						t.applySettings(i.ss)
-					} else {
-						t.framer.writeSettings(true, i.ss...)
-					}
-				case *resetStream:
-					t.framer.writeRSTStream(true, i.streamID, i.code)
-				case *flushIO:
-					t.framer.flushWrite()
-				case *ping:
-					// TODO(zhaoq): Ack with all-0 data now. will change to some
-					// meaningful content when this is actually in use.
-					t.framer.writePing(true, i.ack, [8]byte{})
-				default:
-					grpclog.Printf("transport: ssh2Client.controller got unexpected item type %v\n", i)
-				}
-				t.writableChan <- 0
-				continue
-			case <-t.shutdownChan:
-				return
-			}
-		case <-t.shutdownChan:
-			return
-		}
-	}
+	// for {
+	// 	select {
+	// 	case i := <-t.controlBuf.get():
+	// 		t.controlBuf.load()
+	// 		select {
+	// 		case <-t.writableChan:
+	// 			switch i := i.(type) {
+	// 			case *windowUpdate:
+	// 				t.framer.writeWindowUpdate(true, i.streamID, i.increment)
+	// 			case *settings:
+	// 				if i.ack {
+	// 					t.framer.writeSettingsAck(true)
+	// 					t.applySettings(i.ss)
+	// 				} else {
+	// 					t.framer.writeSettings(true, i.ss...)
+	// 				}
+	// 			case *resetStream:
+	// 				t.framer.writeRSTStream(true, i.streamID, i.code)
+	// 			case *flushIO:
+	// 				t.framer.flushWrite()
+	// 			case *ping:
+	// 				// TODO(zhaoq): Ack with all-0 data now. will change to some
+	// 				// meaningful content when this is actually in use.
+	// 				t.framer.writePing(true, i.ack, [8]byte{})
+	// 			default:
+	// 				grpclog.Printf("transport: ssh2Client.controller got unexpected item type %v\n", i)
+	// 			}
+	// 			t.writableChan <- 0
+	// 			continue
+	// 		case <-t.shutdownChan:
+	// 			return
+	// 		}
+	// 	case <-t.shutdownChan:
+	// 		return
+	// 	}
+	// }
 }
 
 func (t *ssh2Client) Error() <-chan struct{} {
@@ -908,12 +909,12 @@ func (t *ssh2Client) Error() <-chan struct{} {
 }
 
 func (t *ssh2Client) notifyError(err error) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	// make sure t.errorChan is closed only once.
-	if t.state == reachable {
-		t.state = unreachable
-		close(t.errorChan)
-		grpclog.Printf("transport: http2Client.notifyError got notified that the client transport was broken %v.", err)
-	}
+	// t.mu.Lock()
+	// defer t.mu.Unlock()
+	// // make sure t.errorChan is closed only once.
+	// if t.state == reachable {
+	// 	t.state = unreachable
+	// 	close(t.errorChan)
+	// 	grpclog.Printf("transport: http2Client.notifyError got notified that the client transport was broken %v.", err)
+	// }
 }
