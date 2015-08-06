@@ -138,11 +138,23 @@ func newSSH2Client(addr string, opts *ConnectOptions) (_ ClientTransport, err er
 		return nil, ConnectionErrorf("transport: %v", err)
 	}
 
-	defer conn.Close()
+	// Ad to Gaetan: This is an interesting pattern.
+	// it will close connection only if err != nil
+	// at the end of this function.
+	defer func() {
+		if err != nil {
+			conn.Close()
+		}
+	}()
 
-	// original code sends clientPreface here (conn.Write)
+	// Ad: original code sends http2.ClientPreface here (conn.Write)
+	// I don't think it's needed in our case. We have SSH auth, subsystems...
 
-	// then creates a new "framer"
+	// Ad: then creates a new "framer"
+	// We will implement this differently. From what I understood, each frame comes with a header
+	// And it allows get the corresponding stream...etc
+	// In our case, each request will have its dedicated ssh Channel (Stream), so we don't have
+	// to do any logic to find the context.
 
 	return nil, errors.New("newSSH2Client WORK IN PROGRESS")
 
