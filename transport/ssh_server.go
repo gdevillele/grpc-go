@@ -49,7 +49,6 @@ import (
 	// "golang.org/x/net/context"
 	"google.golang.org/grpc/codes"
 	// "google.golang.org/grpc/grpclog"
-	"fmt"
 	"google.golang.org/grpc/metadata"
 
 	"encoding/hex"
@@ -131,10 +130,13 @@ type ssh2Server struct {
 // newSSH2Server constructs a ServerTransport based on HTTP2. ConnectionError is
 // returned if something goes wrong.
 func newSSH2Server(conn net.Conn, maxStreams uint32) (_ ServerTransport, err error) {
-	fmt.Println("newSSH2Server")
+
+	logrus.SetLevel(logrus.DebugLevel)
+
+	logrus.Debugln("newSSH2Server")
 
 	keyAuthCallback := func(conn ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
-		fmt.Println("newSSH2Server -- user public key: ", hex.EncodeToString(key.Marshal())[:64]+"...")
+		logrus.Debugln("newSSH2Server -- user public key: ", hex.EncodeToString(key.Marshal())[:64]+"...")
 		return &ssh.Permissions{}, nil
 	}
 
@@ -257,7 +259,7 @@ func handleNewChannels(newchans <-chan ssh.NewChannel) {
 // TODO(zhaoq): Now it indicates the end of entire stream. Revisit if early
 // OK is adopted.
 func (t *ssh2Server) WriteStatus(s *Stream, statusCode codes.Code, statusDesc string) error {
-	fmt.Println("ssh2Server: WriteStatus()")
+	logrus.Debugln("ssh2Server: WriteStatus()")
 	return nil
 
 	// =================================== original code ======================================
@@ -294,7 +296,7 @@ func (t *ssh2Server) WriteStatus(s *Stream, statusCode codes.Code, statusDesc st
 // Write converts the data into HTTP2 data frame and sends it out. Non-nil error
 // is returns if it fails (e.g., framing error, transport error).
 func (t *ssh2Server) Write(s *Stream, data []byte, opts *Options) error {
-	fmt.Println("ssh2Server: Write()")
+	logrus.Debugln("ssh2Server: Write()")
 	return nil
 	// =================================== original code ======================================
 	// // TODO(zhaoq): Support multi-writers for a single stream.
@@ -390,7 +392,7 @@ func (t *ssh2Server) Write(s *Stream, data []byte, opts *Options) error {
 
 // WriteHeader sends the header metedata md back to the client.
 func (t *ssh2Server) WriteHeader(s *Stream, md metadata.MD) error {
-	fmt.Println("ssh2Server: WriteHeader()")
+	logrus.Debugln("ssh2Server: WriteHeader()")
 	return nil
 	// =================================== original code ======================================
 	// s.mu.Lock()
@@ -419,7 +421,7 @@ func (t *ssh2Server) WriteHeader(s *Stream, md metadata.MD) error {
 // HandleStreams receives incoming streams using the given handler. This is
 // typically run in a separate goroutine.
 func (t *ssh2Server) HandleStreams(handle func(*Stream)) {
-	fmt.Println("ssh2Server: HandleStreams()")
+	logrus.Debugln("ssh2Server: HandleStreams()")
 	return
 	// =================================== original code ======================================
 	// // Check the validity of client preface.
@@ -506,7 +508,7 @@ func (t *ssh2Server) HandleStreams(handle func(*Stream)) {
 // TODO(zhaoq): Now the destruction is not blocked on any pending streams. This
 // could cause some resource issue. Revisit this later.
 func (t *ssh2Server) Close() (err error) {
-	fmt.Println("ssh2Server: Close()")
+	logrus.Debugln("ssh2Server: Close()")
 	return nil
 	// =================================== original code ======================================
 	// t.mu.Lock()
@@ -534,7 +536,7 @@ func (t *ssh2Server) Close() (err error) {
 // controller running in a separate goroutine takes charge of sending control
 // frames (e.g., window update, reset stream, setting, etc.) to the server.
 func (t *ssh2Server) controller() {
-	fmt.Println("ssh2Server: controller()")
+	logrus.Debugln("ssh2Server: controller()")
 	return
 	// =================================== original code ======================================
 	// for {

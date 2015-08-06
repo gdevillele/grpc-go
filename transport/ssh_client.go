@@ -36,10 +36,10 @@ package transport
 import (
 	"bytes"
 	"errors"
-	"fmt"
+	"github.com/Sirupsen/logrus"
 	"io"
 	"math"
-	"net"
+	// "net"
 	"sync"
 	//"time"
 
@@ -63,7 +63,7 @@ import (
 type ssh2Client struct {
 	// target    string // server name/addr
 	// userAgent string
-	conn net.Conn // underlying communication channel
+	conn *ssh.Client // underlying communication channel
 	// nextID    uint32   // the next stream ID to be used
 
 	// // writableChan synchronizes write access to the transport.
@@ -111,7 +111,9 @@ type ssh2Client struct {
 // fails.
 func newSSH2Client(addr string, opts *ConnectOptions) (_ ClientTransport, err error) {
 
-	fmt.Println("< newSSH2Client >")
+	logrus.SetLevel(logrus.DebugLevel)
+
+	logrus.Debugln("newSSH2Client")
 
 	// generate hostKey, needed to ssh connect
 	appPath, err := osext.Executable()
@@ -156,7 +158,24 @@ func newSSH2Client(addr string, opts *ConnectOptions) (_ ClientTransport, err er
 	// In our case, each request will have its dedicated ssh Channel (Stream), so we don't have
 	// to do any logic to find the context.
 
-	return nil, errors.New("newSSH2Client WORK IN PROGRESS")
+	t := &ssh2Client{
+		conn:            conn,
+		writableChan:    make(chan int, 1),
+		shutdownChan:    make(chan struct{}),
+		errorChan:       make(chan struct{}),
+		controlBuf:      newRecvBuffer(),
+		sendQuotaPool:   newQuotaPool(defaultWindowSize),
+		state:           reachable,
+		activeStreams:   make(map[uint32]*Stream),
+		streamSendQuota: defaultWindowSize,
+	}
+
+	//go t.controller()
+	t.writableChan <- 0
+	// go t.reader()
+	return t, nil
+
+	// return nil, errors.New("newSSH2Client WORK IN PROGRESS")
 
 	// =================================== original code ======================================
 	// if opts.Dialer == nil {
@@ -288,6 +307,10 @@ func (t *ssh2Client) newStream(ctx context.Context, callHdr *CallHdr) *Stream {
 // NewStream creates a stream and register it into the transport as "active"
 // streams.
 func (t *ssh2Client) NewStream(ctx context.Context, callHdr *CallHdr) (_ *Stream, err error) {
+
+	logrus.Debugln("NewStream")
+	logrus.Debugln("NewStream -- ctx:", ctx)
+	logrus.Debugln("NewStream -- callHdr:", callHdr)
 
 	return nil, errors.New("ssh2Client NewStream WORK IN PROGRESS")
 
