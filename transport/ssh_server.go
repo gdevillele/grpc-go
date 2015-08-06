@@ -34,6 +34,7 @@
 package transport
 
 import (
+	"github.com/Sirupsen/logrus"
 	// "bytes"
 	// "errors"
 	// "io"
@@ -50,6 +51,12 @@ import (
 	// "google.golang.org/grpc/grpclog"
 	"fmt"
 	"google.golang.org/grpc/metadata"
+
+	"encoding/hex"
+	"github.com/kardianos/osext"
+	"github.com/taruti/sshutil"
+	"golang.org/x/crypto/ssh"
+	"path/filepath"
 )
 
 // type ServerTransport interface {
@@ -102,7 +109,7 @@ type ssh2Server struct {
 	// hEnc *hpack.Encoder // HPACK encoder
 
 	// // The max number of concurrent streams.
-	maxStreams uint32
+	// maxStreams uint32
 	// // controlBuf delivers all the control related tasks (e.g., window
 	// // updates, reset streams, and various settings) to the controller.
 	// controlBuf *recvBuffer
@@ -124,14 +131,54 @@ type ssh2Server struct {
 // newSSH2Server constructs a ServerTransport based on HTTP2. ConnectionError is
 // returned if something goes wrong.
 func newSSH2Server(conn net.Conn, maxStreams uint32) (_ ServerTransport, err error) {
-	fmt.Println("< newSSH2Server >")
+	fmt.Println("newSSH2Server")
 
-	// returns a ssh2Server
+	keyAuthCallback := func(conn ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
+		fmt.Println("newSSH2Server -- user public key: ", hex.EncodeToString(key.Marshal())[:64]+"...")
+		return &ssh.Permissions{}, nil
+	}
+
+	config := &ssh.ServerConfig{
+		PublicKeyCallback: keyAuthCallback,
+	}
+
+	// get or create host key for ssh server
+	appPath, err := osext.Executable()
+	if err != nil {
+		return nil, err
+	}
+	keyPath := filepath.Join(filepath.Dir(appPath), "hostKey.pem")
+	hostKey, err := sshutil.KeyLoader{Path: keyPath, Flags: sshutil.Create + sshutil.Save + sshutil.RSA2048}.Load()
+	if err != nil {
+		return nil, err
+	}
+	config.AddHostKey(hostKey)
+
+	//var chans <-chan ssh.NewChannel
+	//var reqs <-chan *ssh.Request
+	//sshConn, newChans, globalReqs, err := ssh.NewServerConn(conn, config)
+	_, newChans, globalReqs, err := ssh.NewServerConn(conn, config)
+
+	if err != nil {
+		logrus.Debugln("newSSH2Server -- Failed to hanshake:", err.Error())
+		return nil, err
+	} else {
+		logrus.Debugln("newSSH2Server -- hanshake OK")
+
+		// the incoming global requests channel must be serviced.
+		go ssh.DiscardRequests(globalReqs)
+
+		// the NewChannel channel must be serviced
+		go handleNewChannels(newChans)
+
+		// h.HandleNewChannels(chans)
+	}
 
 	t := &ssh2Server{
-		conn:       conn,
-		maxStreams: maxStreams, // GAETAN: not sure max streams is needed... we will see.
+		conn:         conn,
+		writableChan: make(chan int, 1),
 	}
+
 	go t.controller()
 	t.writableChan <- 0
 	return t, nil
@@ -178,6 +225,31 @@ func newSSH2Server(conn net.Conn, maxStreams uint32) (_ ServerTransport, err err
 	// go t.controller()
 	// t.writableChan <- 0
 	// return t, nil
+}
+
+func handleNewChannels(newchans <-chan ssh.NewChannel) {
+
+	logrus.Debugln("handleNewChannels")
+
+	for newChannel := range newchans {
+
+		chType := newChannel.ChannelType()
+		//chArgs := newChannel.ExtraData()
+
+		if chType != "session" {
+			newChannel.Reject(ssh.UnknownChannelType, "unknown channel type")
+		} else {
+			//channel, requests, err := newChannel.Accept()
+			_, _, err := newChannel.Accept()
+			if err != nil {
+				logrus.Debugln("ERROR: failed to accept new channel (" + chType + ")")
+				continue
+			}
+
+			logrus.Debugln("handleNewChannels -- new channel")
+			//h.HandleChannel(chType, chArgs, channel, requests)
+		}
+	}
 }
 
 // WriteStatus sends stream status to the client and terminates the stream.
