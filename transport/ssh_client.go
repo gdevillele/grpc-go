@@ -36,71 +36,116 @@ package transport
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"io"
 	"math"
 	"net"
 	"sync"
-	"time"
+	//"time"
 
 	"github.com/bradfitz/http2"
-	"github.com/bradfitz/http2/hpack"
+	// "github.com/bradfitz/http2/hpack"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/credentials"
+	// "google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/grpclog"
-	"google.golang.org/grpc/metadata"
+	//"google.golang.org/grpc/metadata"
+	"golang.org/x/crypto/ssh"
+
+	"github.com/kardianos/osext"
+
+	"github.com/taruti/sshutil"
+
+	"path/filepath"
 )
 
 // ssh2Client implements the ClientTransport interface with HTTP2.
 type ssh2Client struct {
 	// target    string // server name/addr
 	// userAgent string
-	// conn      net.Conn // underlying communication channel
+	conn net.Conn // underlying communication channel
 	// nextID    uint32   // the next stream ID to be used
 
 	// // writableChan synchronizes write access to the transport.
 	// // A writer acquires the write lock by sending a value on writableChan
 	// // and releases it by receiving from writableChan.
-	// writableChan chan int
-	// // shutdownChan is closed when Close is called.
-	// // Blocking operations should select on shutdownChan to avoid
-	// // blocking forever after Close.
-	// // TODO(zhaoq): Maybe have a channel context?
-	// shutdownChan chan struct{}
-	// // errorChan is closed to notify the I/O error to the caller.
-	// errorChan chan struct{}
+	writableChan chan int
+	// shutdownChan is closed when Close is called.
+	// Blocking operations should select on shutdownChan to avoid
+	// blocking forever after Close.
+	// TODO(zhaoq): Maybe have a channel context?
+	shutdownChan chan struct{}
+	// errorChan is closed to notify the I/O error to the caller.
+	errorChan chan struct{}
 
-	// framer *framer
+	framer *framer
 	// hBuf   *bytes.Buffer  // the buffer for HPACK encoding
 	// hEnc   *hpack.Encoder // HPACK encoder
 
-	// // controlBuf delivers all the control related tasks (e.g., window
-	// // updates, reset streams, and various settings) to the controller.
-	// controlBuf *recvBuffer
+	// controlBuf delivers all the control related tasks (e.g., window
+	// updates, reset streams, and various settings) to the controller.
+	controlBuf *recvBuffer
 	// fc         *inFlow
-	// // sendQuotaPool provides flow control to outbound message.
-	// sendQuotaPool *quotaPool
-	// // streamsQuota limits the max number of concurrent streams.
-	// streamsQuota *quotaPool
+	// sendQuotaPool provides flow control to outbound message.
+	sendQuotaPool *quotaPool
+
+	// streamsQuota limits the max number of concurrent streams.
+	streamsQuota *quotaPool
 
 	// // The scheme used: https if TLS is on, http otherwise.
 	// scheme string
 
 	// authCreds []credentials.Credentials
 
-	// mu            sync.Mutex     // guard the following variables
-	// state         transportState // the state of underlying connection
-	// activeStreams map[uint32]*Stream
-	// // The max number of concurrent streams
-	// maxStreams int
-	// // the per-stream outbound flow control window size set by the peer.
-	// streamSendQuota uint32
+	mu            sync.Mutex     // guard the following variables
+	state         transportState // the state of underlying connection
+	activeStreams map[uint32]*Stream
+	// The max number of concurrent streams
+	maxStreams int
+	// the per-stream outbound flow control window size set by the peer.
+	streamSendQuota uint32
 }
 
 // newSSH2Client constructs a connected ClientTransport to addr based on HTTP2
 // and starts to receive messages on it. Non-nil error returns if construction
 // fails.
 func newSSH2Client(addr string, opts *ConnectOptions) (_ ClientTransport, err error) {
+
+	fmt.Println("< newSSH2Client >")
+
+	// generate hostKey, needed to ssh connect
+	appPath, err := osext.Executable()
+	if err != nil {
+		return nil, err
+	}
+	keyPath := filepath.Join(filepath.Dir(appPath), "key.pem")
+	hostKey, err := sshutil.KeyLoader{Path: keyPath, Flags: sshutil.Create + sshutil.Save + sshutil.RSA2048}.Load()
+	if err != nil {
+		return nil, err
+	}
+
+	config := &ssh.ClientConfig{
+		User: "test",
+		Auth: []ssh.AuthMethod{
+			ssh.Password("test"),
+			ssh.PublicKeys(hostKey),
+		},
+	}
+
+	conn, err := ssh.Dial("tcp", addr, config)
+
+	if err != nil {
+		return nil, ConnectionErrorf("transport: %v", err)
+	}
+
+	defer conn.Close()
+
+	// original code sends clientPreface here (conn.Write)
+
+	// then creates a new "framer"
+
+	return nil, errors.New("newSSH2Client WORK IN PROGRESS")
+
 	// =================================== original code ======================================
 	// if opts.Dialer == nil {
 	// 	// Set the default Dialer.
@@ -198,6 +243,9 @@ func newSSH2Client(addr string, opts *ConnectOptions) (_ ClientTransport, err er
 }
 
 func (t *ssh2Client) newStream(ctx context.Context, callHdr *CallHdr) *Stream {
+
+	return nil
+
 	// =================================== original code ======================================
 	// fc := &inFlow{
 	// 	limit: initialWindowSize,
@@ -228,6 +276,9 @@ func (t *ssh2Client) newStream(ctx context.Context, callHdr *CallHdr) *Stream {
 // NewStream creates a stream and register it into the transport as "active"
 // streams.
 func (t *ssh2Client) NewStream(ctx context.Context, callHdr *CallHdr) (_ *Stream, err error) {
+
+	return nil, errors.New("ssh2Client NewStream WORK IN PROGRESS")
+
 	// // Record the timeout value on the context.
 	// var timeout time.Duration
 	// if dl, ok := ctx.Deadline(); ok {
@@ -337,6 +388,9 @@ func (t *ssh2Client) NewStream(ctx context.Context, callHdr *CallHdr) (_ *Stream
 // CloseStream clears the footprint of a stream when the stream is not needed any more.
 // This must not be executed in reader's goroutine.
 func (t *ssh2Client) CloseStream(s *Stream, err error) {
+
+	// return errors.New("ssh2Client CloseStream WORK IN PROGRESS")
+
 	var updateStreams bool
 	t.mu.Lock()
 	if t.streamsQuota != nil {
@@ -375,6 +429,9 @@ func (t *ssh2Client) CloseStream(s *Stream, err error) {
 // only once on a transport. Once it is called, the transport should not be
 // accessed any more.
 func (t *ssh2Client) Close() (err error) {
+
+	//return errors.New("ssh2Client CloseStream WORK IN PROGRESS")
+
 	t.mu.Lock()
 	if t.state == closing {
 		t.mu.Unlock()
@@ -406,6 +463,9 @@ func (t *ssh2Client) Close() (err error) {
 // TODO(zhaoq): opts.Delay is ignored in this implementation. Support it later
 // if it improves the performance.
 func (t *ssh2Client) Write(s *Stream, data []byte, opts *Options) error {
+
+	// return errors.New("ssh2Client Write WORK IN PROGRESS")
+
 	r := bytes.NewBuffer(data)
 	for {
 		var p []byte

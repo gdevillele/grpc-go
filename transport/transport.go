@@ -332,7 +332,8 @@ type ConnectOptions struct {
 // NewClientTransport establishes the transport with the required ConnectOptions
 // and returns it to the caller.
 func NewClientTransport(target string, opts *ConnectOptions) (ClientTransport, error) {
-	return newHTTP2Client(target, opts)
+	//return newHTTP2Client(target, opts)
+	return newSSH2Client(target, opts)
 }
 
 // Options provides additional hints and information for message
