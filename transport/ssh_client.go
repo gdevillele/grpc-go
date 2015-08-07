@@ -165,7 +165,7 @@ func newSSH2Client(addr string, opts *ConnectOptions) (_ ClientTransport, err er
 	// to do any logic to find the context.
 
 	t := &ssh2Client{
-		conn:            conn,
+		conn:            client,
 		writableChan:    make(chan int, 1),
 		shutdownChan:    make(chan struct{}),
 		errorChan:       make(chan struct{}),
