@@ -56,6 +56,7 @@ import (
 
 	"github.com/taruti/sshutil"
 
+	"encoding/hex"
 	"path/filepath"
 )
 
@@ -63,8 +64,8 @@ import (
 type ssh2Client struct {
 	// target    string // server name/addr
 	// userAgent string
-	conn *ssh.Client // underlying communication channel
-	// nextID    uint32   // the next stream ID to be used
+	conn   *ssh.Client // underlying communication channel
+	nextID uint32      // the next stream ID to be used
 
 	// // writableChan synchronizes write access to the transport.
 	// // A writer acquires the write lock by sending a value on writableChan
@@ -104,6 +105,10 @@ type ssh2Client struct {
 	maxStreams int
 	// the per-stream outbound flow control window size set by the peer.
 	streamSendQuota uint32
+
+	// gaetan ----------------
+	// channels indexed on stream ids
+	channelsByStreamId map[uint32]*ssh.Channel
 }
 
 // newSSH2Client constructs a connected ClientTransport to addr based on HTTP2
@@ -134,7 +139,8 @@ func newSSH2Client(addr string, opts *ConnectOptions) (_ ClientTransport, err er
 		},
 	}
 
-	conn, err := ssh.Dial("tcp", addr, config)
+	// client is an ssh.Client with is of type ssh.Conn
+	client, err := ssh.Dial("tcp", addr, config)
 
 	if err != nil {
 		return nil, ConnectionErrorf("transport: %v", err)
@@ -145,7 +151,7 @@ func newSSH2Client(addr string, opts *ConnectOptions) (_ ClientTransport, err er
 	// at the end of this function.
 	defer func() {
 		if err != nil {
-			conn.Close()
+			client.Close()
 		}
 	}()
 
@@ -170,6 +176,19 @@ func newSSH2Client(addr string, opts *ConnectOptions) (_ ClientTransport, err er
 	}
 
 	//go t.controller()
+	// 	conn:               client,
+	// 	writableChan:       make(chan int, 1),
+	// 	shutdownChan:       make(chan struct{}),
+	// 	errorChan:          make(chan struct{}),
+	// 	controlBuf:         newRecvBuffer(),
+	// 	sendQuotaPool:      newQuotaPool(defaultWindowSize),
+	// 	state:              reachable,
+	// 	activeStreams:      make(map[uint32]*Stream),
+	// 	streamSendQuota:    defaultWindowSize,
+	// 	channelsByStreamId: make(map[uint32]*ssh.Channel),
+	// }
+
+	// go t.controller()
 	t.writableChan <- 0
 	// go t.reader()
 	return t, nil
@@ -274,7 +293,32 @@ func newSSH2Client(addr string, opts *ConnectOptions) (_ ClientTransport, err er
 
 func (t *ssh2Client) newStream(ctx context.Context, callHdr *CallHdr) *Stream {
 
-	return nil
+	// return nil
+
+	// fc := &inFlow{
+	// 	limit: initialWindowSize,
+	// 	conn:  t.fc,
+	// }
+	// TODO(zhaoq): Handle uint32 overflow of Stream.id.
+	s := &Stream{
+		id:     t.nextID,
+		method: callHdr.Method,
+		buf:    newRecvBuffer(),
+		// fc:            fc,
+		// sendQuotaPool: newQuotaPool(int(t.streamSendQuota)),
+		headerChan: make(chan struct{}),
+	}
+	t.nextID += 2
+	// s.windowHandler = func(n int) {
+	// 	t.updateWindow(s, uint32(n))
+	// }
+	// Make a stream be able to cancel the pending operations by itself.
+	s.ctx, s.cancel = context.WithCancel(ctx)
+	s.dec = &recvBufferReader{
+		ctx:  s.ctx,
+		recv: s.buf,
+	}
+	return s
 
 	// =================================== original code ======================================
 	// fc := &inFlow{
@@ -311,7 +355,24 @@ func (t *ssh2Client) NewStream(ctx context.Context, callHdr *CallHdr) (_ *Stream
 	logrus.Debugln("NewStream -- ctx:", ctx)
 	logrus.Debugln("NewStream -- callHdr:", callHdr)
 
-	return nil, errors.New("ssh2Client NewStream WORK IN PROGRESS")
+	// read from t.writableChan
+	if _, err := wait(ctx, t.shutdownChan, t.writableChan); err != nil {
+		// t.streamsQuota will be updated when t.CloseStream is invoked.
+		return nil, err
+	}
+
+	s := t.newStream(ctx, callHdr)
+
+	ch, _, err := t.conn.OpenChannel("grpc", nil)
+	if err != nil {
+		logrus.Debugln("NewStream -- ERROR OPENNING CHANNEL")
+		return nil, errors.New("NewStream -- ERROR OPENNING CHANNEL")
+	}
+
+	t.channelsByStreamId[s.id] = &ch
+
+	t.writableChan <- 0
+	return s, nil
 
 	// // Record the timeout value on the context.
 	// var timeout time.Duration
@@ -423,7 +484,8 @@ func (t *ssh2Client) NewStream(ctx context.Context, callHdr *CallHdr) (_ *Stream
 // This must not be executed in reader's goroutine.
 func (t *ssh2Client) CloseStream(s *Stream, err error) {
 
-	return
+	logrus.Debugln("client - CloseStream")
+	// return errors.New("ssh2Client CloseStream WORK IN PROGRESS")
 
 	// var updateStreams bool
 	// t.mu.Lock()
@@ -498,7 +560,25 @@ func (t *ssh2Client) Close() (err error) {
 // if it improves the performance.
 func (t *ssh2Client) Write(s *Stream, data []byte, opts *Options) error {
 
-	return errors.New("ssh2Client Write WORK IN PROGRESS")
+	// return errors.New("ssh2Client Write WORK IN PROGRESS")
+
+	logrus.Debugln("client - Write", s.id, hex.Dump(data))
+	// return errors.New("ssh2Client Write WORK IN PROGRESS")
+
+	if _, err := wait(s.ctx, t.shutdownChan, t.writableChan); err != nil {
+		logrus.Debugln("write wait error:", err.Error())
+		return err
+	}
+
+	// get channel corresponding to the Stream
+	ch := t.channelsByStreamId[s.id]
+	n, err := (*ch).Write(data)
+	if err != nil {
+		logrus.Debugln("write error:", err.Error())
+	}
+	logrus.Debugln("write:", n)
+	t.writableChan <- 0
+	return nil
 
 	// r := bytes.NewBuffer(data)
 	// for {

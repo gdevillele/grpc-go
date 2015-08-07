@@ -181,8 +181,8 @@ func newSSH2Server(conn net.Conn, maxStreams uint32) (_ ServerTransport, err err
 		writableChan: make(chan int, 1),
 	}
 
-	go t.controller()
-	t.writableChan <- 0
+	// go t.controller()
+	// t.writableChan <- 0
 	return t, nil
 
 	// =================================== original code ======================================
@@ -231,27 +231,74 @@ func newSSH2Server(conn net.Conn, maxStreams uint32) (_ ServerTransport, err err
 
 func handleNewChannels(newchans <-chan ssh.NewChannel) {
 
-	logrus.Debugln("handleNewChannels")
-
 	for newChannel := range newchans {
 
-		chType := newChannel.ChannelType()
-		//chArgs := newChannel.ExtraData()
+		logrus.Debugln("handleNewChannel", newChannel.ChannelType())
 
-		if chType != "session" {
-			newChannel.Reject(ssh.UnknownChannelType, "unknown channel type")
+		chType := newChannel.ChannelType()
+		chArgs := newChannel.ExtraData()
+
+		if chType != "grpc" {
+			newChannel.Reject(ssh.UnknownChannelType, "unknown/unsupported channel type")
 		} else {
 			//channel, requests, err := newChannel.Accept()
-			_, _, err := newChannel.Accept()
+			channel, requests, err := newChannel.Accept()
 			if err != nil {
 				logrus.Debugln("ERROR: failed to accept new channel (" + chType + ")")
 				continue
 			}
 
 			logrus.Debugln("handleNewChannels -- new channel")
-			//h.HandleChannel(chType, chArgs, channel, requests)
+			HandleChannel(chType, chArgs, channel, requests)
 		}
+
+		// if chType != "session" {
+		// 	newChannel.Reject(ssh.UnknownChannelType, "unknown channel type")
+		// } else {
+		// 	//channel, requests, err := newChannel.Accept()
+		// 	_, _, err := newChannel.Accept()
+		// 	if err != nil {
+		// 		logrus.Debugln("ERROR: failed to accept new channel (" + chType + ")")
+		// 		continue
+		// 	}
+
+		// 	logrus.Debugln("handleNewChannels -- new channel")
+		// 	//h.HandleChannel(chType, chArgs, channel, requests)
+		// }
 	}
+}
+
+func HandleChannel(chType string, chArgs []byte, ch ssh.Channel, reqs <-chan *ssh.Request) {
+
+	go func(in <-chan *ssh.Request) {
+		for req := range in {
+			logrus.Debugln("AdminTool -> Request of type:", req.Type, "len:", len(req.Type))
+			logrus.Debugln("AdminTool -> Request payload:", string(req.Payload), "len:", len(req.Payload))
+
+			if req.WantReply {
+				req.Reply(false, nil)
+			}
+		}
+		logrus.Debugln("AdminTool -> End of request GO chan")
+	}(reqs)
+
+	go func() {
+		for {
+			// read from channel and write to conn1
+			buffer := make([]byte, 64)
+			n, err := ch.Read(buffer)
+			if err != nil {
+				if err.Error() == "EOF" {
+					logrus.Debugf("%s", hex.Dump(buffer[:n]))
+
+					break
+				} else {
+					logrus.Fatalln("failed to read channel : " + err.Error())
+				}
+			}
+			logrus.Debugf("%s", hex.Dump(buffer[:n]))
+		}
+	}()
 }
 
 // WriteStatus sends stream status to the client and terminates the stream.
