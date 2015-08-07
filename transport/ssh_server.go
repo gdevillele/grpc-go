@@ -41,7 +41,6 @@ import (
 	// "math"
 	"net"
 	"strconv"
-	// "strconv"
 	// "sync"
 
 	// "github.com/bradfitz/http2"
@@ -57,6 +56,7 @@ import (
 	"github.com/taruti/sshutil"
 	"golang.org/x/crypto/ssh"
 	"path/filepath"
+	"strings"
 )
 
 // type ServerTransport interface {
@@ -413,12 +413,19 @@ func (t *ssh2Server) HandleStreams(handle func(*Stream)) {
 				continue
 			}
 
+			// parse NewChannel extra data to get the grpc headers
+			args := strings.Split(string(chArgs), "|")
+			// logrus.Debugln("args:", args)
+
 			// Using Channel's extra data to send the Stream ID
-			streamID, err := strconv.ParseUint(string(chArgs), 10, 32)
+			streamID, err := strconv.ParseUint(args[0], 10, 32)
 			if err != nil {
 				logrus.Fatalln("cannot parse Stream ID")
 			}
 			logrus.Debugln("HandleStreams -- Stream ID is", streamID)
+
+			logrus.Debugln("HandleStreams -- HOST is", args[1])
+			logrus.Debugln("HandleStreams -- METHODS is", args[2])
 
 			// create a Stream with the stream id
 			s := &Stream{

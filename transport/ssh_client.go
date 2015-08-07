@@ -303,6 +303,8 @@ func (t *ssh2Client) newStream(ctx context.Context, callHdr *CallHdr) *Stream {
 	// 	limit: initialWindowSize,
 	// 	conn:  t.fc,
 	// }
+
+	logrus.Debugln("new stream with method:", callHdr.Method)
 	// TODO(zhaoq): Handle uint32 overflow of Stream.id.
 	s := &Stream{
 		id:     t.nextID,
@@ -367,10 +369,25 @@ func (t *ssh2Client) NewStream(ctx context.Context, callHdr *CallHdr) (_ *Stream
 
 	s := t.newStream(ctx, callHdr)
 
+	// build the NewChannel extra data
+	// it contains the Stream ID, the method name, and the host name
+	extraData := ""
 	// convert Stream ID into a string
 	intStr := strconv.FormatUint(uint64(s.id), 10)
-	logrus.Debugln("extra data", s.id, intStr)
-	ch, _, err := t.conn.OpenChannel("grpc", []byte(intStr))
+	logrus.Debugln("EXTRA DATA ID:", intStr)
+	extraData += intStr + "|"
+	// add HTTP method
+	// logrus.Debugln("EXTRA DATA HTTP METHOD:", "POST")
+	// extraData += "POST" + "|"
+	// add host
+	logrus.Debugln("EXTRA DATA HOST:", callHdr.Host)
+	extraData += callHdr.Host + "|"
+	// add method
+	logrus.Debugln("EXTRA DATA METHOD:", callHdr.Method)
+	extraData += callHdr.Method + "|"
+	logrus.Debugln("EXTRA DATA FINAL:", extraData)
+
+	ch, _, err := t.conn.OpenChannel("grpc", []byte(extraData))
 	if err != nil {
 		logrus.Debugln("NewStream -- ERROR OPENNING CHANNEL")
 		return nil, errors.New("NewStream -- ERROR OPENNING CHANNEL")
