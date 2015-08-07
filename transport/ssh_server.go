@@ -268,6 +268,8 @@ func (t *ssh2Server) WriteStatus(s *Stream, statusCode codes.Code, statusDesc st
 // is returns if it fails (e.g., framing error, transport error).
 func (t *ssh2Server) Write(s *Stream, data []byte, opts *Options) error {
 	logrus.Debugln("Write")
+	logrus.Debugln("Write -- data:", hex.EncodeToString(data))
+	logrus.Debugf("Write -- opts: %+v", opts)
 	return nil
 	// =================================== original code ======================================
 	// // TODO(zhaoq): Support multi-writers for a single stream.
@@ -431,7 +433,7 @@ func (t *ssh2Server) HandleStreams(handle func(*Stream)) {
 			s := &Stream{
 				id:     uint32(streamID),
 				buf:    newRecvBuffer(),
-				method: "helloworld.Greeter/SayHello",
+				method: args[2],
 			}
 
 			s.ctx, s.cancel = context.WithCancel(context.TODO())
@@ -554,7 +556,6 @@ func handleChannel(s *Stream, ch ssh.Channel, reqs <-chan *ssh.Request, handle f
 			n, err := ch.Read(buffer)
 			if err != nil {
 				if err.Error() == "EOF" {
-					logrus.Debugln("EOF:", hex.EncodeToString(buffer[:n]))
 					handleData(s, []byte{}, true)
 					// all data received: handle Stream message
 					handle(s)
@@ -563,7 +564,6 @@ func handleChannel(s *Stream, ch ssh.Channel, reqs <-chan *ssh.Request, handle f
 					logrus.Fatalln("failed to read channel : " + err.Error())
 				}
 			}
-			logrus.Debugln(hex.EncodeToString(buffer[:n]))
 			handleData(s, buffer[:n], false)
 		}
 	}()
@@ -744,7 +744,7 @@ func (t *ssh2Server) controller() {
 
 func handleData(s *Stream, data []byte, EOF bool) {
 
-	logrus.Debugln("handleData -- data:", data)
+	logrus.Debugln("handleData -- data:", hex.EncodeToString(data))
 
 	if len(data) > 0 {
 		logrus.Debugln("handleData -- write")
