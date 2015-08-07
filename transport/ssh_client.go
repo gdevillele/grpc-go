@@ -120,6 +120,8 @@ func newSSH2Client(addr string, opts *ConnectOptions) (_ ClientTransport, err er
 	logrus.SetLevel(logrus.DebugLevel)
 
 	logrus.Debugln("newSSH2Client")
+	logrus.Debugln("newSSH2Client -- addr:", addr)
+	logrus.Debugln("newSSH2Client -- opts:", opts)
 
 	// generate hostKey, needed to ssh connect
 	appPath, err := osext.Executable()
@@ -567,7 +569,7 @@ func (t *ssh2Client) Write(s *Stream, data []byte, opts *Options) error {
 
 	// return errors.New("ssh2Client Write WORK IN PROGRESS")
 
-	logrus.Debugln("client - Write", s.id, hex.Dump(data))
+	logrus.Debugln("Write -- stream ID:", s.id, "- data:", hex.EncodeToString(data))
 	// return errors.New("ssh2Client Write WORK IN PROGRESS")
 
 	if _, err := wait(s.ctx, t.shutdownChan, t.writableChan); err != nil {
@@ -582,7 +584,23 @@ func (t *ssh2Client) Write(s *Stream, data []byte, opts *Options) error {
 		logrus.Debugln("write error:", err.Error())
 	}
 	logrus.Debugln("write:", n)
+
+	// Done writing, close write (server will receive EOF)
+	(*ch).CloseWrite()
+
 	t.writableChan <- 0
+
+	// logrus.Debugln("s.state:", s.state)
+	if s.state != streamDone {
+		if s.state == streamReadDone {
+			s.state = streamDone
+		} else {
+			s.state = streamWriteDone
+		}
+	}
+
+	logrus.Debugln("s.state:", s.state)
+
 	return nil
 
 	// r := bytes.NewBuffer(data)

@@ -242,7 +242,6 @@ func handleNewChannels(newchans <-chan ssh.NewChannel) {
 		if chType != "grpc" {
 			newChannel.Reject(ssh.UnknownChannelType, "unknown/unsupported channel type")
 		} else {
-			//channel, requests, err := newChannel.Accept()
 			channel, requests, err := newChannel.Accept()
 			if err != nil {
 				logrus.Debugln("ERROR: failed to accept new channel (" + chType + ")")
@@ -251,35 +250,23 @@ func handleNewChannels(newchans <-chan ssh.NewChannel) {
 
 			logrus.Debugln("handleNewChannels -- new channel")
 
-			i, err := strconv.ParseUint(string(chArgs), 10, 32)
+			// Using Channel's extra data to send the Stream ID
+			streamID, err := strconv.ParseUint(string(chArgs), 10, 32)
 			if err != nil {
 				logrus.Fatalln("cannot parse Stream ID")
 			}
-			logrus.Debugln("Stream ID is", i)
+			logrus.Debugln("Stream ID is", streamID)
 			// create a Stream with the stream id
 			// ...
 
 			HandleChannel(chType, chArgs, channel, requests)
 		}
-
-		// if chType != "session" {
-		// 	newChannel.Reject(ssh.UnknownChannelType, "unknown channel type")
-		// } else {
-		// 	//channel, requests, err := newChannel.Accept()
-		// 	_, _, err := newChannel.Accept()
-		// 	if err != nil {
-		// 		logrus.Debugln("ERROR: failed to accept new channel (" + chType + ")")
-		// 		continue
-		// 	}
-
-		// 	logrus.Debugln("handleNewChannels -- new channel")
-		// 	//h.HandleChannel(chType, chArgs, channel, requests)
-		// }
 	}
 }
 
 func HandleChannel(chType string, chArgs []byte, ch ssh.Channel, reqs <-chan *ssh.Request) {
 
+	// handle requests receive for this Channel
 	go func(in <-chan *ssh.Request) {
 		for req := range in {
 			logrus.Debugln("AdminTool -> Request of type:", req.Type, "len:", len(req.Type))
@@ -292,21 +279,22 @@ func HandleChannel(chType string, chArgs []byte, ch ssh.Channel, reqs <-chan *ss
 		logrus.Debugln("AdminTool -> End of request GO chan")
 	}(reqs)
 
+	// read data from channel
 	go func() {
 		for {
-			// read from channel and write to conn1
 			buffer := make([]byte, 64)
 			n, err := ch.Read(buffer)
 			if err != nil {
 				if err.Error() == "EOF" {
-					logrus.Debugf("%s", hex.Dump(buffer[:n]))
-
+					logrus.Debugf("EOF: %s", hex.Dump(buffer[:n]))
+					// TODO: send EOF to handleData
 					break
 				} else {
 					logrus.Fatalln("failed to read channel : " + err.Error())
 				}
 			}
 			logrus.Debugf("%s", hex.Dump(buffer[:n]))
+			// TODO: handleData for this stream
 		}
 	}()
 }
@@ -449,7 +437,7 @@ func (t *ssh2Server) Write(s *Stream, data []byte, opts *Options) error {
 
 // WriteHeader sends the header metedata md back to the client.
 func (t *ssh2Server) WriteHeader(s *Stream, md metadata.MD) error {
-	logrus.Debugln("ssh2Server: WriteHeader()")
+	logrus.Debugln("WriteHeader")
 	return nil
 	// =================================== original code ======================================
 	// s.mu.Lock()
@@ -478,7 +466,7 @@ func (t *ssh2Server) WriteHeader(s *Stream, md metadata.MD) error {
 // HandleStreams receives incoming streams using the given handler. This is
 // typically run in a separate goroutine.
 func (t *ssh2Server) HandleStreams(handle func(*Stream)) {
-	logrus.Debugln("ssh2Server: HandleStreams()")
+	logrus.Debugln("HandleStreams")
 	return
 	// =================================== original code ======================================
 	// // Check the validity of client preface.
@@ -565,7 +553,7 @@ func (t *ssh2Server) HandleStreams(handle func(*Stream)) {
 // TODO(zhaoq): Now the destruction is not blocked on any pending streams. This
 // could cause some resource issue. Revisit this later.
 func (t *ssh2Server) Close() (err error) {
-	logrus.Debugln("ssh2Server: Close()")
+	logrus.Debugln("Close")
 	return nil
 	// =================================== original code ======================================
 	// t.mu.Lock()
@@ -593,7 +581,7 @@ func (t *ssh2Server) Close() (err error) {
 // controller running in a separate goroutine takes charge of sending control
 // frames (e.g., window update, reset stream, setting, etc.) to the server.
 func (t *ssh2Server) controller() {
-	logrus.Debugln("ssh2Server: controller()")
+	logrus.Debugln("controller")
 	return
 	// =================================== original code ======================================
 	// for {
