@@ -94,7 +94,11 @@ import (
 
 // ssh2Server implements the ServerTransport interface with HTTP2.
 type ssh2Server struct {
-	conn net.Conn
+	conn          net.Conn
+	sshServerConn *ssh.ServerConn
+	newChans      <-chan ssh.NewChannel
+	globalReqs    <-chan *ssh.Request
+
 	// maxStreamID uint32 // max stream ID ever seen
 	// // writableChan synchronizes write access to the transport.
 	// // A writer acquires the write lock by sending a value on writableChan
@@ -157,33 +161,22 @@ func newSSH2Server(conn net.Conn, maxStreams uint32) (_ ServerTransport, err err
 	}
 	config.AddHostKey(hostKey)
 
-	//var chans <-chan ssh.NewChannel
-	//var reqs <-chan *ssh.Request
-	//sshConn, newChans, globalReqs, err := ssh.NewServerConn(conn, config)
-	_, newChans, globalReqs, err := ssh.NewServerConn(conn, config)
+	t := &ssh2Server{
+		conn:         conn,
+		writableChan: make(chan int, 1),
+	}
+
+	t.sshServerConn, t.newChans, t.globalReqs, err = ssh.NewServerConn(conn, config)
 
 	if err != nil {
 		logrus.Debugln("newSSH2Server -- Failed to hanshake:", err.Error())
 		return nil, err
 	} else {
 		logrus.Debugln("newSSH2Server -- hanshake OK")
-
-		// the incoming global requests channel must be serviced.
-		go ssh.DiscardRequests(globalReqs)
-
-		// the NewChannel channel must be serviced
-		go handleNewChannels(newChans)
-
-		// h.HandleNewChannels(chans)
-	}
-
-	t := &ssh2Server{
-		conn:         conn,
-		writableChan: make(chan int, 1),
 	}
 
 	// go t.controller()
-	// t.writableChan <- 0
+	t.writableChan <- 0
 	return t, nil
 
 	// =================================== original code ======================================
@@ -228,75 +221,6 @@ func newSSH2Server(conn net.Conn, maxStreams uint32) (_ ServerTransport, err err
 	// go t.controller()
 	// t.writableChan <- 0
 	// return t, nil
-}
-
-func handleNewChannels(newchans <-chan ssh.NewChannel) {
-
-	for newChannel := range newchans {
-
-		logrus.Debugln("handleNewChannel", newChannel.ChannelType())
-
-		chType := newChannel.ChannelType()
-		chArgs := newChannel.ExtraData()
-
-		if chType != "grpc" {
-			newChannel.Reject(ssh.UnknownChannelType, "unknown/unsupported channel type")
-		} else {
-			channel, requests, err := newChannel.Accept()
-			if err != nil {
-				logrus.Debugln("ERROR: failed to accept new channel (" + chType + ")")
-				continue
-			}
-
-			logrus.Debugln("handleNewChannels -- new channel")
-
-			// Using Channel's extra data to send the Stream ID
-			streamID, err := strconv.ParseUint(string(chArgs), 10, 32)
-			if err != nil {
-				logrus.Fatalln("cannot parse Stream ID")
-			}
-			logrus.Debugln("Stream ID is", streamID)
-			// create a Stream with the stream id
-			// ...
-
-			HandleChannel(chType, chArgs, channel, requests)
-		}
-	}
-}
-
-func HandleChannel(chType string, chArgs []byte, ch ssh.Channel, reqs <-chan *ssh.Request) {
-
-	// handle requests receive for this Channel
-	go func(in <-chan *ssh.Request) {
-		for req := range in {
-			logrus.Debugln("AdminTool -> Request of type:", req.Type, "len:", len(req.Type))
-			logrus.Debugln("AdminTool -> Request payload:", string(req.Payload), "len:", len(req.Payload))
-
-			if req.WantReply {
-				req.Reply(false, nil)
-			}
-		}
-		logrus.Debugln("AdminTool -> End of request GO chan")
-	}(reqs)
-
-	// read data from channel
-	go func() {
-		for {
-			buffer := make([]byte, 64)
-			n, err := ch.Read(buffer)
-			if err != nil {
-				if err.Error() == "EOF" {
-					logrus.Debugf("EOF: %s", hex.Dump(buffer[:n]))
-					// TODO: send EOF to handleData
-					break
-				} else {
-					logrus.Fatalln("failed to read channel : " + err.Error())
-				}
-			}
-			logrus.Debugf("%s", hex.Dump(buffer[:n]))
-			// TODO: handleData for this stream
-		}
-	}()
 }
 
 // WriteStatus sends stream status to the client and terminates the stream.
@@ -467,6 +391,41 @@ func (t *ssh2Server) WriteHeader(s *Stream, md metadata.MD) error {
 // typically run in a separate goroutine.
 func (t *ssh2Server) HandleStreams(handle func(*Stream)) {
 	logrus.Debugln("HandleStreams")
+
+	go ssh.DiscardRequests(t.globalReqs)
+
+	// handle new ssh channels (one channel == one rpc)
+	for newChannel := range newchans {
+
+		logrus.Debugln("HandleStreams -- new channel", newChannel.ChannelType())
+
+		chType := newChannel.ChannelType()
+		chArgs := newChannel.ExtraData()
+
+		if chType != "grpc" {
+			newChannel.Reject(ssh.UnknownChannelType, "unknown/unsupported channel type")
+		} else {
+			channel, requests, err := newChannel.Accept()
+			if err != nil {
+				logrus.Debugln("ERROR: failed to accept new channel (" + chType + ")")
+				continue
+			}
+
+			logrus.Debugln("handleNewChannels -- new channel")
+
+			// Using Channel's extra data to send the Stream ID
+			streamID, err := strconv.ParseUint(string(chArgs), 10, 32)
+			if err != nil {
+				logrus.Fatalln("cannot parse Stream ID")
+			}
+			logrus.Debugln("Stream ID is", streamID)
+			// create a Stream with the stream id
+			// ...
+
+			handleChannel(chType, chArgs, channel, requests)
+		}
+	}
+
 	return
 	// =================================== original code ======================================
 	// // Check the validity of client preface.
@@ -547,6 +506,41 @@ func (t *ssh2Server) HandleStreams(handle func(*Stream)) {
 	// 		grpclog.Printf("transport: http2Server.HandleStreams found unhandled frame type %v.", frame)
 	// 	}
 	// }
+}
+
+func handleChannel(chType string, chArgs []byte, ch ssh.Channel, reqs <-chan *ssh.Request) {
+
+	// handle requests receive for this Channel
+	go func(in <-chan *ssh.Request) {
+		for req := range in {
+			logrus.Debugln("AdminTool -> Request of type:", req.Type, "len:", len(req.Type))
+			logrus.Debugln("AdminTool -> Request payload:", string(req.Payload), "len:", len(req.Payload))
+
+			if req.WantReply {
+				req.Reply(false, nil)
+			}
+		}
+		logrus.Debugln("AdminTool -> End of request GO chan")
+	}(reqs)
+
+	// read data from channel
+	go func() {
+		for {
+			buffer := make([]byte, 64)
+			n, err := ch.Read(buffer)
+			if err != nil {
+				if err.Error() == "EOF" {
+					logrus.Debugf("EOF: %s", hex.Dump(buffer[:n]))
+					// TODO: send EOF to handleData
+					break
+				} else {
+					logrus.Fatalln("failed to read channel : " + err.Error())
+				}
+			}
+			logrus.Debugf("%s", hex.Dump(buffer[:n]))
+			// TODO: handleData for this stream
+		}
+	}()
 }
 
 // Close starts shutting down the http2Server transport.
