@@ -40,6 +40,7 @@ import (
 	// "io"
 	// "math"
 	"net"
+	"strconv"
 	// "strconv"
 	// "sync"
 
@@ -249,6 +250,15 @@ func handleNewChannels(newchans <-chan ssh.NewChannel) {
 			}
 
 			logrus.Debugln("handleNewChannels -- new channel")
+
+			i, err := strconv.ParseUint(string(chArgs), 10, 32)
+			if err != nil {
+				logrus.Fatalln("cannot parse Stream ID")
+			}
+			logrus.Debugln("Stream ID is", i)
+			// create a Stream with the stream id
+			// ...
+
 			HandleChannel(chType, chArgs, channel, requests)
 		}
 

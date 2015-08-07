@@ -37,6 +37,7 @@ import (
 	// "bytes"
 	"errors"
 	"github.com/Sirupsen/logrus"
+	"strconv"
 	// "io"
 	// "math"
 	// "net"
@@ -165,14 +166,15 @@ func newSSH2Client(addr string, opts *ConnectOptions) (_ ClientTransport, err er
 	// to do any logic to find the context.
 
 	t := &ssh2Client{
-		conn:            client,
-		writableChan:    make(chan int, 1),
-		shutdownChan:    make(chan struct{}),
-		errorChan:       make(chan struct{}),
-		controlBuf:      newRecvBuffer(),
-		sendQuotaPool:   newQuotaPool(defaultWindowSize),
-		state:           reachable,
-		streamSendQuota: defaultWindowSize,
+		conn:               client,
+		writableChan:       make(chan int, 1),
+		shutdownChan:       make(chan struct{}),
+		errorChan:          make(chan struct{}),
+		controlBuf:         newRecvBuffer(),
+		sendQuotaPool:      newQuotaPool(defaultWindowSize),
+		state:              reachable,
+		streamSendQuota:    defaultWindowSize,
+		channelsByStreamId: make(map[uint32]*ssh.Channel),
 	}
 
 	//go t.controller()
@@ -363,7 +365,10 @@ func (t *ssh2Client) NewStream(ctx context.Context, callHdr *CallHdr) (_ *Stream
 
 	s := t.newStream(ctx, callHdr)
 
-	ch, _, err := t.conn.OpenChannel("grpc", nil)
+	// convert Stream ID into a string
+	intStr := strconv.FormatUint(uint64(s.id), 10)
+	logrus.Debugln("extra data", s.id, intStr)
+	ch, _, err := t.conn.OpenChannel("grpc", []byte(intStr))
 	if err != nil {
 		logrus.Debugln("NewStream -- ERROR OPENNING CHANNEL")
 		return nil, errors.New("NewStream -- ERROR OPENNING CHANNEL")
