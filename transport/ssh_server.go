@@ -36,7 +36,7 @@ package transport
 import (
 	"github.com/Sirupsen/logrus"
 	// "bytes"
-	// "errors"
+	"errors"
 	"io"
 	// "math"
 	"net"
@@ -46,7 +46,7 @@ import (
 	// "github.com/bradfitz/http2"
 	// "github.com/bradfitz/http2/hpack"
 
-	// "golang.org/x/net/context"
+	"golang.org/x/net/context"
 	"google.golang.org/grpc/codes"
 	// "google.golang.org/grpc/grpclog"
 	"google.golang.org/grpc/metadata"
@@ -231,7 +231,7 @@ func (t *ssh2Server) WriteStatus(s *Stream, statusCode codes.Code, statusDesc st
 	logrus.Debugln("WriteStatus")
 	logrus.Debugln("WriteStatus -- statusCode:", statusCode)
 	logrus.Debugln("WriteStatus -- statusDesc:", statusDesc)
-	return nil
+	return errors.New("WriteStatus not implemented")
 
 	// =================================== original code ======================================
 	// s.mu.RLock()
@@ -267,7 +267,7 @@ func (t *ssh2Server) WriteStatus(s *Stream, statusCode codes.Code, statusDesc st
 // Write converts the data into HTTP2 data frame and sends it out. Non-nil error
 // is returns if it fails (e.g., framing error, transport error).
 func (t *ssh2Server) Write(s *Stream, data []byte, opts *Options) error {
-	logrus.Debugln("ssh2Server: Write()")
+	logrus.Debugln("Write")
 	return nil
 	// =================================== original code ======================================
 	// // TODO(zhaoq): Support multi-writers for a single stream.
@@ -429,8 +429,21 @@ func (t *ssh2Server) HandleStreams(handle func(*Stream)) {
 
 			// create a Stream with the stream id
 			s := &Stream{
-				id:  uint32(streamID),
-				buf: newRecvBuffer(),
+				id:     uint32(streamID),
+				buf:    newRecvBuffer(),
+				method: "helloworld.Greeter/SayHello",
+			}
+
+			s.ctx, s.cancel = context.WithCancel(context.TODO())
+
+			s.dec = &recvBufferReader{
+				ctx:  s.ctx,
+				recv: s.buf,
+			}
+
+			s.windowHandler = func(n int) {
+				// ABSOLUTELY NEEDED?
+				// t.updateWindow(s, uint32(n))
 			}
 
 			handleChannel(s, channel, requests, handle)
