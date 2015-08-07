@@ -36,7 +36,7 @@ package transport
 import (
 	"github.com/Sirupsen/logrus"
 	// "bytes"
-	"errors"
+	// "errors"
 	"io"
 	// "math"
 	"net"
@@ -127,9 +127,9 @@ type ssh2Server struct {
 	// // the per-stream outbound flow control window size set by the peer.
 	// streamSendQuota uint32
 
-	// customized
-	// open channels indexed on Stream.Id
-	// channels map[uint32]*ssh.Channel
+	// gaetan
+	// channels indexed on stream ids
+	channelsByStreamId map[uint32]*ssh.Channel
 }
 
 // newSSH2Server constructs a ServerTransport based on HTTP2. ConnectionError is
@@ -162,8 +162,9 @@ func newSSH2Server(conn net.Conn, maxStreams uint32) (_ ServerTransport, err err
 	config.AddHostKey(hostKey)
 
 	t := &ssh2Server{
-		conn:         conn,
-		writableChan: make(chan int, 1),
+		conn:               conn,
+		writableChan:       make(chan int, 1),
+		channelsByStreamId: make(map[uint32]*ssh.Channel),
 	}
 
 	t.sshServerConn, t.newChans, t.globalReqs, err = ssh.NewServerConn(conn, config)
@@ -231,7 +232,15 @@ func (t *ssh2Server) WriteStatus(s *Stream, statusCode codes.Code, statusDesc st
 	logrus.Debugln("WriteStatus")
 	logrus.Debugln("WriteStatus -- statusCode:", statusCode)
 	logrus.Debugln("WriteStatus -- statusDesc:", statusDesc)
-	return errors.New("WriteStatus not implemented")
+
+	ch := t.channelsByStreamId[s.id]
+	err := (*ch).CloseWrite()
+	return err
+	// _, err := (*ch).Write(data)
+	// if err != nil {
+	// 	logrus.Debugln("ERROR writing back in the channel...", err.Error())
+	// }
+	// return errors.New("WriteStatus not implemented")
 
 	// =================================== original code ======================================
 	// s.mu.RLock()
@@ -270,6 +279,14 @@ func (t *ssh2Server) Write(s *Stream, data []byte, opts *Options) error {
 	logrus.Debugln("Write")
 	logrus.Debugln("Write -- data:", hex.EncodeToString(data))
 	logrus.Debugf("Write -- opts: %+v", opts)
+
+	ch := t.channelsByStreamId[s.id]
+
+	_, err := (*ch).Write(data)
+	if err != nil {
+		logrus.Debugln("ERROR writing back in the channel...", err.Error())
+	}
+
 	return nil
 	// =================================== original code ======================================
 	// // TODO(zhaoq): Support multi-writers for a single stream.
@@ -338,16 +355,16 @@ func (t *ssh2Server) Write(s *Stream, data []byte, opts *Options) error {
 	// 	t.framer.adjustNumWriters(1)
 	// 	// Got some quota. Try to acquire writing privilege on the
 	// 	// transport.
-	// 	if _, err := wait(s.ctx, t.shutdownChan, t.writableChan); err != nil {
-	// 		if t.framer.adjustNumWriters(-1) == 0 {
-	// 			// This writer is the last one in this batch and has the
-	// 			// responsibility to flush the buffered frames. It queues
-	// 			// a flush request to controlBuf instead of flushing directly
-	// 			// in order to avoid the race with other writing or flushing.
-	// 			t.controlBuf.put(&flushIO{})
-	// 		}
-	// 		return err
+	// if _, err := wait(s.ctx, t.shutdownChan, t.writableChan); err != nil {
+	// 	if t.framer.adjustNumWriters(-1) == 0 {
+	// 		// This writer is the last one in this batch and has the
+	// 		// responsibility to flush the buffered frames. It queues
+	// 		// a flush request to controlBuf instead of flushing directly
+	// 		// in order to avoid the race with other writing or flushing.
+	// 		t.controlBuf.put(&flushIO{})
 	// 	}
+	// 	return err
+	// }
 	// 	var forceFlush bool
 	// 	if r.Len() == 0 && t.framer.adjustNumWriters(0) == 1 && !opts.Last {
 	// 		forceFlush = true
@@ -428,6 +445,8 @@ func (t *ssh2Server) HandleStreams(handle func(*Stream)) {
 
 			logrus.Debugln("HandleStreams -- HOST is", args[1])
 			logrus.Debugln("HandleStreams -- METHODS is", args[2])
+
+			t.channelsByStreamId[uint32(streamID)] = &channel
 
 			// create a Stream with the stream id
 			s := &Stream{

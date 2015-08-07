@@ -36,6 +36,7 @@ package transport
 import (
 	// "bytes"
 	"errors"
+	"fmt"
 	"github.com/Sirupsen/logrus"
 	"strconv"
 	// "io"
@@ -58,6 +59,8 @@ import (
 	"github.com/taruti/sshutil"
 
 	"encoding/hex"
+	"google.golang.org/grpc/codes"
+	"io"
 	"path/filepath"
 )
 
@@ -107,7 +110,7 @@ type ssh2Client struct {
 	// the per-stream outbound flow control window size set by the peer.
 	streamSendQuota uint32
 
-	// gaetan ----------------
+	// gaetan
 	// channels indexed on stream ids
 	channelsByStreamId map[uint32]*ssh.Channel
 }
@@ -394,6 +397,9 @@ func (t *ssh2Client) NewStream(ctx context.Context, callHdr *CallHdr) (_ *Stream
 	}
 
 	t.channelsByStreamId[s.id] = &ch
+
+	// read from channel (for response)
+	go t.reader(&ch, s)
 
 	t.writableChan <- 0
 	return s, nil
@@ -899,7 +905,48 @@ func (t *ssh2Client) operateHeaders(hDec *hpackDecoder, s *Stream, frame headerF
 // TODO(zhaoq): currently one reader per transport. Investigate whether this is
 // optimal.
 // TODO(zhaoq): Check the validity of the incoming frame sequence.
-func (t *ssh2Client) reader() {
+func (t *ssh2Client) reader(ch *ssh.Channel, s *Stream) {
+
+	// executed in a goroutine
+
+	// read from the channel, wait for response, and handle response
+
+	data := make([]byte, 0)
+
+	for {
+		buf := make([]byte, 64)
+		n, err := (*ch).Read(buf)
+		if err != nil {
+			if err.Error() == "EOF" {
+				buf = buf[:n]
+				data = append(data, buf...)
+				break
+			} else {
+				logrus.Fatalln(err.Error())
+			}
+		}
+		buf = buf[:n]
+		data = append(data, buf...)
+	}
+
+	logrus.Debugln("read:", hex.EncodeToString(data))
+	fmt.Println(hex.Dump(data))
+
+	// end of response
+	s.write(recvMsg{data: data})
+
+	s.mu.Lock()
+	if s.state == streamWriteDone {
+		s.state = streamDone
+	} else {
+		s.state = streamReadDone
+	}
+	s.statusCode = codes.Internal
+	s.statusDesc = "server closed the stream without sending trailers"
+	s.mu.Unlock()
+	s.write(recvMsg{err: io.EOF})
+
+	// =========================== original code ===================================
 	// Check the validity of server preface.
 	// frame, err := t.framer.readFrame()
 	// if err != nil {
