@@ -37,7 +37,7 @@ import (
 	"github.com/Sirupsen/logrus"
 	// "bytes"
 	// "errors"
-	// "io"
+	"io"
 	// "math"
 	"net"
 	"strconv"
@@ -395,7 +395,7 @@ func (t *ssh2Server) HandleStreams(handle func(*Stream)) {
 	go ssh.DiscardRequests(t.globalReqs)
 
 	// handle new ssh channels (one channel == one rpc)
-	for newChannel := range newchans {
+	for newChannel := range t.newChans {
 
 		logrus.Debugln("HandleStreams -- new channel", newChannel.ChannelType())
 
@@ -411,18 +411,20 @@ func (t *ssh2Server) HandleStreams(handle func(*Stream)) {
 				continue
 			}
 
-			logrus.Debugln("handleNewChannels -- new channel")
-
 			// Using Channel's extra data to send the Stream ID
 			streamID, err := strconv.ParseUint(string(chArgs), 10, 32)
 			if err != nil {
 				logrus.Fatalln("cannot parse Stream ID")
 			}
-			logrus.Debugln("Stream ID is", streamID)
-			// create a Stream with the stream id
-			// ...
+			logrus.Debugln("HandleStreams -- Stream ID is", streamID)
 
-			handleChannel(chType, chArgs, channel, requests)
+			// create a Stream with the stream id
+			s := &Stream{
+				id:  uint32(streamID),
+				buf: newRecvBuffer(),
+			}
+
+			handleChannel(s, channel, requests, handle)
 		}
 	}
 
@@ -508,7 +510,7 @@ func (t *ssh2Server) HandleStreams(handle func(*Stream)) {
 	// }
 }
 
-func handleChannel(chType string, chArgs []byte, ch ssh.Channel, reqs <-chan *ssh.Request) {
+func handleChannel(s *Stream, ch ssh.Channel, reqs <-chan *ssh.Request, handle func(*Stream)) {
 
 	// handle requests receive for this Channel
 	go func(in <-chan *ssh.Request) {
@@ -531,14 +533,16 @@ func handleChannel(chType string, chArgs []byte, ch ssh.Channel, reqs <-chan *ss
 			if err != nil {
 				if err.Error() == "EOF" {
 					logrus.Debugf("EOF: %s", hex.Dump(buffer[:n]))
-					// TODO: send EOF to handleData
+					handleData(s, []byte{}, true)
+					// all data received: handle Stream message
+					handle(s)
 					break
 				} else {
 					logrus.Fatalln("failed to read channel : " + err.Error())
 				}
 			}
 			logrus.Debugf("%s", hex.Dump(buffer[:n]))
-			// TODO: handleData for this stream
+			handleData(s, buffer[:n], false)
 		}
 	}()
 }
@@ -716,45 +720,29 @@ func (t *ssh2Server) controller() {
 // 	}
 // }
 
-// func (t *ssh2Server) handleData(f *http2.DataFrame) {
-// 	// Select the right stream to dispatch.
-// 	s, ok := t.getStream(f)
-// 	if !ok {
-// 		return
-// 	}
-// 	size := len(f.Data())
-// 	if size > 0 {
-// 		if err := s.fc.onData(uint32(size)); err != nil {
-// 			if _, ok := err.(ConnectionError); ok {
-// 				grpclog.Printf("transport: http2Server %v", err)
-// 				t.Close()
-// 				return
-// 			}
-// 			t.closeStream(s)
-// 			t.controlBuf.put(&resetStream{s.id, http2.ErrCodeFlowControl})
-// 			return
-// 		}
-// 		// TODO(bradfitz, zhaoq): A copy is required here because there is no
-// 		// guarantee f.Data() is consumed before the arrival of next frame.
-// 		// Can this copy be eliminated?
-// 		data := make([]byte, size)
-// 		copy(data, f.Data())
-// 		s.write(recvMsg{data: data})
-// 	}
-// 	if f.Header().Flags.Has(http2.FlagDataEndStream) {
-// 		// Received the end of stream from the client.
-// 		s.mu.Lock()
-// 		if s.state != streamDone {
-// 			if s.state == streamWriteDone {
-// 				s.state = streamDone
-// 			} else {
-// 				s.state = streamReadDone
-// 			}
-// 		}
-// 		s.mu.Unlock()
-// 		s.write(recvMsg{err: io.EOF})
-// 	}
-// }
+func handleData(s *Stream, data []byte, EOF bool) {
+
+	logrus.Debugln("handleData -- data:", data)
+
+	if len(data) > 0 {
+		logrus.Debugln("handleData -- write")
+		s.write(recvMsg{data: data})
+	}
+
+	if EOF {
+		logrus.Debugln("handleData -- EOF")
+
+		if s.state != streamDone {
+			if s.state == streamWriteDone {
+				s.state = streamDone
+			} else {
+				s.state = streamReadDone
+			}
+		}
+
+		s.write(recvMsg{err: io.EOF})
+	}
+}
 
 // func (t *ssh2Server) handleRSTStream(f *http2.RSTStreamFrame) {
 // 	s, ok := t.getStream(f)
