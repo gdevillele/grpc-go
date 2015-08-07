@@ -228,7 +228,9 @@ func newSSH2Server(conn net.Conn, maxStreams uint32) (_ ServerTransport, err err
 // TODO(zhaoq): Now it indicates the end of entire stream. Revisit if early
 // OK is adopted.
 func (t *ssh2Server) WriteStatus(s *Stream, statusCode codes.Code, statusDesc string) error {
-	logrus.Debugln("ssh2Server: WriteStatus()")
+	logrus.Debugln("WriteStatus")
+	logrus.Debugln("WriteStatus -- statusCode:", statusCode)
+	logrus.Debugln("WriteStatus -- statusDesc:", statusDesc)
 	return nil
 
 	// =================================== original code ======================================
@@ -532,7 +534,7 @@ func handleChannel(s *Stream, ch ssh.Channel, reqs <-chan *ssh.Request, handle f
 			n, err := ch.Read(buffer)
 			if err != nil {
 				if err.Error() == "EOF" {
-					logrus.Debugf("EOF: %s", hex.Dump(buffer[:n]))
+					logrus.Debugln("EOF:", hex.EncodeToString(buffer[:n]))
 					handleData(s, []byte{}, true)
 					// all data received: handle Stream message
 					handle(s)
@@ -541,7 +543,7 @@ func handleChannel(s *Stream, ch ssh.Channel, reqs <-chan *ssh.Request, handle f
 					logrus.Fatalln("failed to read channel : " + err.Error())
 				}
 			}
-			logrus.Debugf("%s", hex.Dump(buffer[:n]))
+			logrus.Debugln(hex.EncodeToString(buffer[:n]))
 			handleData(s, buffer[:n], false)
 		}
 	}()
