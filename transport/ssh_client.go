@@ -36,13 +36,12 @@ package transport
 import (
 	// "bytes"
 	"errors"
-	"fmt"
 	"github.com/Sirupsen/logrus"
 	"strconv"
 	// "io"
 	// "math"
 	// "net"
-	"sync"
+	// "sync"
 	//"time"
 
 	"github.com/bradfitz/http2"
@@ -51,8 +50,8 @@ import (
 	// "google.golang.org/grpc/codes"
 	// "google.golang.org/grpc/credentials"
 	// "google.golang.org/grpc/grpclog"
-	//"google.golang.org/grpc/metadata"
 	"golang.org/x/crypto/ssh"
+	"google.golang.org/grpc/metadata"
 
 	"github.com/kardianos/osext"
 
@@ -102,7 +101,7 @@ type ssh2Client struct {
 
 	// authCreds []credentials.Credentials
 
-	mu    sync.Mutex     // guard the following variables
+	// mu    sync.Mutex     // guard the following variables
 	state transportState // the state of underlying connection
 
 	// The max number of concurrent streams
@@ -316,6 +315,7 @@ func (t *ssh2Client) newStream(ctx context.Context, callHdr *CallHdr) *Stream {
 		// fc:            fc,
 		// sendQuotaPool: newQuotaPool(int(t.streamSendQuota)),
 		headerChan: make(chan struct{}),
+		header:     metadata.MD{},
 	}
 	t.nextID += 2
 	// s.windowHandler = func(n int) {
@@ -327,6 +327,12 @@ func (t *ssh2Client) newStream(ctx context.Context, callHdr *CallHdr) *Stream {
 		ctx:  s.ctx,
 		recv: s.buf,
 	}
+
+	s.windowHandler = func(n int) {
+		// ABSOLUTELY NEEDED?
+		// t.updateWindow(s, uint32(n))
+	}
+
 	return s
 
 	// =================================== original code ======================================
@@ -513,8 +519,7 @@ func (t *ssh2Client) NewStream(ctx context.Context, callHdr *CallHdr) (_ *Stream
 // CloseStream clears the footprint of a stream when the stream is not needed any more.
 // This must not be executed in reader's goroutine.
 func (t *ssh2Client) CloseStream(s *Stream, err error) {
-
-	logrus.Debugln("client - CloseStream")
+	logrus.Debugln("CloseStream")
 	// return errors.New("ssh2Client CloseStream WORK IN PROGRESS")
 
 	// var updateStreams bool
@@ -555,7 +560,7 @@ func (t *ssh2Client) CloseStream(s *Stream, err error) {
 // only once on a transport. Once it is called, the transport should not be
 // accessed any more.
 func (t *ssh2Client) Close() (err error) {
-
+	logrus.Debugln("Close")
 	return errors.New("ssh2Client Close WORK IN PROGRESS")
 
 	// t.mu.Lock()
@@ -593,6 +598,7 @@ func (t *ssh2Client) Write(s *Stream, data []byte, opts *Options) error {
 	// return errors.New("ssh2Client Write WORK IN PROGRESS")
 
 	logrus.Debugln("Write -- stream ID:", s.id, "- data:", hex.EncodeToString(data))
+	logrus.Debugf("Write -- opts: %+v", opts)
 	// return errors.New("ssh2Client Write WORK IN PROGRESS")
 
 	if _, err := wait(s.ctx, t.shutdownChan, t.writableChan); err != nil {
@@ -617,8 +623,10 @@ func (t *ssh2Client) Write(s *Stream, data []byte, opts *Options) error {
 	if s.state != streamDone {
 		if s.state == streamReadDone {
 			s.state = streamDone
+			logrus.Debugln("s.state: streamDone")
 		} else {
 			s.state = streamWriteDone
+			logrus.Debugln("s.state: streamWriteDone")
 		}
 	}
 
@@ -929,22 +937,32 @@ func (t *ssh2Client) reader(ch *ssh.Channel, s *Stream) {
 		data = append(data, buf...)
 	}
 
-	logrus.Debugln("read:", hex.EncodeToString(data))
-	fmt.Println(hex.Dump(data))
+	logrus.Debugln("reader -- data:", hex.EncodeToString(data))
 
 	// end of response
 	s.write(recvMsg{data: data})
 
-	s.mu.Lock()
 	if s.state == streamWriteDone {
 		s.state = streamDone
+		logrus.Debugln("s.state: streamDone")
 	} else {
 		s.state = streamReadDone
+		logrus.Debugln("s.state: streamReadDone")
 	}
-	s.statusCode = codes.Internal
-	s.statusDesc = "server closed the stream without sending trailers"
-	s.mu.Unlock()
+
+	//s.statusCode = codes.Internal
+	//s.statusDesc = "server closed the stream without sending trailers"
+
+	s.statusCode = codes.OK
+
 	s.write(recvMsg{err: io.EOF})
+
+	// close headerChan to progress in
+	// google.golang.org/grpc/call.go: func recvResponse
+	// this line -> c.headerMD, err = stream.Header()
+	// look at func (s *Stream) Header() in grpc/transport/transport.go
+	// it waits for headerChan to be closed or stream cancellation
+	close(s.headerChan)
 
 	// =========================== original code ===================================
 	// Check the validity of server preface.
