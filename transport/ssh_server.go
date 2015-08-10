@@ -34,29 +34,28 @@
 package transport
 
 import (
-	"github.com/Sirupsen/logrus"
-	// "bytes"
-	// "errors"
+	"encoding/hex"
 	"io"
-	// "math"
 	"net"
+	"path/filepath"
 	"strconv"
+	"strings"
 	// "sync"
-
-	// "github.com/bradfitz/http2"
-	// "github.com/bradfitz/http2/hpack"
+	// "math"
+	// "errors"
+	// "bytes"
 
 	"golang.org/x/net/context"
 	"google.golang.org/grpc/codes"
-	// "google.golang.org/grpc/grpclog"
 	"google.golang.org/grpc/metadata"
+	// "github.com/bradfitz/http2"
+	// "github.com/bradfitz/http2/hpack"
+	// "google.golang.org/grpc/grpclog"
 
-	"encoding/hex"
+	"github.com/Sirupsen/logrus"
 	"github.com/kardianos/osext"
 	"github.com/taruti/sshutil"
 	"golang.org/x/crypto/ssh"
-	"path/filepath"
-	"strings"
 )
 
 // type ServerTransport interface {
@@ -74,30 +73,25 @@ import (
 // 	Close() error
 // }
 
-// func NewServerTransport(protocol string, conn net.Conn, maxStreams uint32) (ServerTransport, error)
-
-//
-//
-//
-
-// GAETAN: NOTES
-//
-// Stream.Id is used to identify the stream concerned (ssh channel here)
-//
-//
-//
-//
-
 // ErrIllegalHeaderWrite indicates that setting header is illegal because of
 // the stream's state.
 // var ErrIllegalHeaderWrite = errors.New("transport: the stream is done or WriteHeader was already called")
 
+// TODO
+// - locks/mutex ?
+// - check use of gochannels
+// - support data -> stream / stream -> data / stream -> stream
+
 // ssh2Server implements the ServerTransport interface with HTTP2.
 type ssh2Server struct {
-	conn          net.Conn
+	conn net.Conn
+	// top level SSH attributes
 	sshServerConn *ssh.ServerConn
 	newChans      <-chan ssh.NewChannel
 	globalReqs    <-chan *ssh.Request
+
+	// channels indexed on stream ids
+	channelsByStreamId map[uint32]*ssh.Channel
 
 	// maxStreamID uint32 // max stream ID ever seen
 	// // writableChan synchronizes write access to the transport.
@@ -126,10 +120,6 @@ type ssh2Server struct {
 	// activeStreams map[uint32]*Stream
 	// // the per-stream outbound flow control window size set by the peer.
 	// streamSendQuota uint32
-
-	// gaetan
-	// channels indexed on stream ids
-	channelsByStreamId map[uint32]*ssh.Channel
 }
 
 // newSSH2Server constructs a ServerTransport based on HTTP2. ConnectionError is
@@ -176,52 +166,8 @@ func newSSH2Server(conn net.Conn, maxStreams uint32) (_ ServerTransport, err err
 		logrus.Debugln("newSSH2Server -- hanshake OK")
 	}
 
-	// go t.controller()
 	t.writableChan <- 0
 	return t, nil
-
-	// =================================== original code ======================================
-	// framer := newFramer(conn)
-	// // Send initial settings as connection preface to client.
-	// var settings []http2.Setting
-	// // TODO(zhaoq): Have a better way to signal "no limit" because 0 is
-	// // permitted in the HTTP2 spec.
-	// if maxStreams == 0 {
-	// 	maxStreams = math.MaxUint32
-	// } else {
-	// 	settings = append(settings, http2.Setting{http2.SettingMaxConcurrentStreams, maxStreams})
-	// }
-	// if initialWindowSize != defaultWindowSize {
-	// 	settings = append(settings, http2.Setting{http2.SettingInitialWindowSize, uint32(initialWindowSize)})
-	// }
-	// if err := framer.writeSettings(true, settings...); err != nil {
-	// 	return nil, ConnectionErrorf("transport: %v", err)
-	// }
-	// // Adjust the connection flow control window if needed.
-	// if delta := uint32(initialConnWindowSize - defaultWindowSize); delta > 0 {
-	// 	if err := framer.writeWindowUpdate(true, 0, delta); err != nil {
-	// 		return nil, ConnectionErrorf("transport: %v", err)
-	// 	}
-	// }
-	// var buf bytes.Buffer
-	// t := &http2Server{
-	// 	conn:            conn,
-	// 	framer:          framer,
-	// 	hBuf:            &buf,
-	// 	hEnc:            hpack.NewEncoder(&buf),
-	// 	maxStreams:      maxStreams,
-	// 	controlBuf:      newRecvBuffer(),
-	// 	fc:              &inFlow{limit: initialConnWindowSize},
-	// 	sendQuotaPool:   newQuotaPool(defaultWindowSize),
-	// 	state:           reachable,
-	// 	writableChan:    make(chan int, 1),
-	// 	shutdownChan:    make(chan struct{}),
-	// 	activeStreams:   make(map[uint32]*Stream),
-	// 	streamSendQuota: defaultWindowSize,
-	// }
-	// go t.controller()
-	// t.writableChan <- 0
-	// return t, nil
 }
 
 // WriteStatus sends stream status to the client and terminates the stream.
@@ -236,11 +182,6 @@ func (t *ssh2Server) WriteStatus(s *Stream, statusCode codes.Code, statusDesc st
 	ch := t.channelsByStreamId[s.id]
 	err := (*ch).CloseWrite()
 	return err
-	// _, err := (*ch).Write(data)
-	// if err != nil {
-	// 	logrus.Debugln("ERROR writing back in the channel...", err.Error())
-	// }
-	// return errors.New("WriteStatus not implemented")
 
 	// =================================== original code ======================================
 	// s.mu.RLock()
@@ -276,18 +217,18 @@ func (t *ssh2Server) WriteStatus(s *Stream, statusCode codes.Code, statusDesc st
 // Write converts the data into HTTP2 data frame and sends it out. Non-nil error
 // is returns if it fails (e.g., framing error, transport error).
 func (t *ssh2Server) Write(s *Stream, data []byte, opts *Options) error {
+
 	logrus.Debugln("Write")
-	logrus.Debugln("Write -- data:", hex.EncodeToString(data))
-	logrus.Debugf("Write -- opts: %+v", opts)
+	// logrus.Debugln("Write -- data:", hex.EncodeToString(data))
+	// logrus.Debugf("Write -- opts: %+v", opts)
 
 	ch := t.channelsByStreamId[s.id]
-
 	_, err := (*ch).Write(data)
 	if err != nil {
 		logrus.Debugln("ERROR writing back in the channel...", err.Error())
 	}
-
 	return nil
+
 	// =================================== original code ======================================
 	// // TODO(zhaoq): Support multi-writers for a single stream.
 	// var writeHeaderFrame bool
@@ -380,10 +321,12 @@ func (t *ssh2Server) Write(s *Stream, data []byte, opts *Options) error {
 	// }
 }
 
-// WriteHeader sends the header metedata md back to the client.
+// WriteHeader sends the header metadata md back to the client.
 func (t *ssh2Server) WriteHeader(s *Stream, md metadata.MD) error {
+
 	logrus.Debugln("WriteHeader")
 	return nil
+
 	// =================================== original code ======================================
 	// s.mu.Lock()
 	// if s.headerOk || s.state == streamDone {
@@ -411,8 +354,10 @@ func (t *ssh2Server) WriteHeader(s *Stream, md metadata.MD) error {
 // HandleStreams receives incoming streams using the given handler. This is
 // typically run in a separate goroutine.
 func (t *ssh2Server) HandleStreams(handle func(*Stream)) {
+
 	logrus.Debugln("HandleStreams")
 
+	// service the global requests channel (by discarding all incoming requests)
 	go ssh.DiscardRequests(t.globalReqs)
 
 	// handle new ssh channels (one channel == one rpc)
@@ -470,8 +415,8 @@ func (t *ssh2Server) HandleStreams(handle func(*Stream)) {
 			handleChannel(s, channel, requests, handle)
 		}
 	}
-
 	return
+
 	// =================================== original code ======================================
 	// // Check the validity of client preface.
 	// preface := make([]byte, len(clientPreface))
@@ -592,8 +537,10 @@ func handleChannel(s *Stream, ch ssh.Channel, reqs <-chan *ssh.Request, handle f
 // TODO(zhaoq): Now the destruction is not blocked on any pending streams. This
 // could cause some resource issue. Revisit this later.
 func (t *ssh2Server) Close() (err error) {
+
 	logrus.Debugln("Close")
 	return nil
+
 	// =================================== original code ======================================
 	// t.mu.Lock()
 	// if t.state == closing {
@@ -616,150 +563,6 @@ func (t *ssh2Server) Close() (err error) {
 // ===========================================================================================
 // UNEXPOSED FUNCTIONS
 // ===========================================================================================
-
-// controller running in a separate goroutine takes charge of sending control
-// frames (e.g., window update, reset stream, setting, etc.) to the server.
-func (t *ssh2Server) controller() {
-	logrus.Debugln("controller")
-	return
-	// =================================== original code ======================================
-	// for {
-	// 	select {
-	// 	case i := <-t.controlBuf.get():
-	// 		t.controlBuf.load()
-	// 		select {
-	// 		case <-t.writableChan:
-	// 			switch i := i.(type) {
-	// 			case *windowUpdate:
-	// 				t.framer.writeWindowUpdate(true, i.streamID, i.increment)
-	// 			case *settings:
-	// 				if i.ack {
-	// 					t.framer.writeSettingsAck(true)
-	// 					t.applySettings(i.ss)
-	// 				} else {
-	// 					t.framer.writeSettings(true, i.ss...)
-	// 				}
-	// 			case *resetStream:
-	// 				t.framer.writeRSTStream(true, i.streamID, i.code)
-	// 			case *flushIO:
-	// 				t.framer.flushWrite()
-	// 			case *ping:
-	// 				// TODO(zhaoq): Ack with all-0 data now. will change to some
-	// 				// meaningful content when this is actually in use.
-	// 				t.framer.writePing(true, i.ack, [8]byte{})
-	// 			default:
-	// 				grpclog.Printf("transport: http2Server.controller got unexpected item type %v\n", i)
-	// 			}
-	// 			t.writableChan <- 0
-	// 			continue
-	// 		case <-t.shutdownChan:
-	// 			return
-	// 		}
-	// 	case <-t.shutdownChan:
-	// 		return
-	// 	}
-	// }
-}
-
-// // operateHeader takes action on the decoded headers. It returns the current
-// // stream if there are remaining headers on the wire (in the following
-// // Continuation frame).
-// func (t *ssh2Server) operateHeaders(hDec *hpackDecoder, s *Stream, frame headerFrame, endStream bool, handle func(*Stream), wg *sync.WaitGroup) (pendingStream *Stream) {
-// 	defer func() {
-// 		if pendingStream == nil {
-// 			hDec.state = decodeState{}
-// 		}
-// 	}()
-// 	endHeaders, err := hDec.decodeServerHTTP2Headers(frame)
-// 	if s == nil {
-// 		// s has been closed.
-// 		return nil
-// 	}
-// 	if err != nil {
-// 		grpclog.Printf("transport: http2Server.operateHeader found %v", err)
-// 		if se, ok := err.(StreamError); ok {
-// 			t.controlBuf.put(&resetStream{s.id, statusCodeConvTab[se.Code]})
-// 		}
-// 		return nil
-// 	}
-// 	if endStream {
-// 		// s is just created by the caller. No lock needed.
-// 		s.state = streamReadDone
-// 	}
-// 	if !endHeaders {
-// 		return s
-// 	}
-// 	t.mu.Lock()
-// 	if t.state != reachable {
-// 		t.mu.Unlock()
-// 		return nil
-// 	}
-// 	if uint32(len(t.activeStreams)) >= t.maxStreams {
-// 		t.mu.Unlock()
-// 		t.controlBuf.put(&resetStream{s.id, http2.ErrCodeRefusedStream})
-// 		return nil
-// 	}
-// 	s.sendQuotaPool = newQuotaPool(int(t.streamSendQuota))
-// 	t.activeStreams[s.id] = s
-// 	t.mu.Unlock()
-// 	s.windowHandler = func(n int) {
-// 		t.updateWindow(s, uint32(n))
-// 	}
-// 	if hDec.state.timeoutSet {
-// 		s.ctx, s.cancel = context.WithTimeout(context.TODO(), hDec.state.timeout)
-// 	} else {
-// 		s.ctx, s.cancel = context.WithCancel(context.TODO())
-// 	}
-// 	// Cache the current stream to the context so that the server application
-// 	// can find out. Required when the server wants to send some metadata
-// 	// back to the client (unary call only).
-// 	s.ctx = newContextWithStream(s.ctx, s)
-// 	// Attach the received metadata to the context.
-// 	if len(hDec.state.mdata) > 0 {
-// 		s.ctx = metadata.NewContext(s.ctx, hDec.state.mdata)
-// 	}
-
-// 	s.dec = &recvBufferReader{
-// 		ctx:  s.ctx,
-// 		recv: s.buf,
-// 	}
-// 	s.method = hDec.state.method
-
-// 	wg.Add(1)
-// 	go func() {
-// 		handle(s)
-// 		wg.Done()
-// 	}()
-// 	return nil
-// }
-
-// func (t *ssh2Server) getStream(f http2.Frame) (*Stream, bool) {
-// 	t.mu.Lock()
-// 	defer t.mu.Unlock()
-// 	if t.activeStreams == nil {
-// 		// The transport is closing.
-// 		return nil, false
-// 	}
-// 	s, ok := t.activeStreams[f.Header().StreamID]
-// 	if !ok {
-// 		// The stream is already done.
-// 		return nil, false
-// 	}
-// 	return s, true
-// }
-
-// // updateWindow adjusts the inbound quota for the stream and the transport.
-// // Window updates will deliver to the controller for sending when
-// // the cumulative quota exceeds the corresponding threshold.
-// func (t *ssh2Server) updateWindow(s *Stream, n uint32) {
-// 	swu, cwu := s.fc.onRead(n)
-// 	if swu > 0 {
-// 		t.controlBuf.put(&windowUpdate{s.id, swu})
-// 	}
-// 	if cwu > 0 {
-// 		t.controlBuf.put(&windowUpdate{0, cwu})
-// 	}
-// }
 
 func handleData(s *Stream, data []byte, EOF bool) {
 
@@ -784,109 +587,3 @@ func handleData(s *Stream, data []byte, EOF bool) {
 		s.write(recvMsg{err: io.EOF})
 	}
 }
-
-// func (t *ssh2Server) handleRSTStream(f *http2.RSTStreamFrame) {
-// 	s, ok := t.getStream(f)
-// 	if !ok {
-// 		return
-// 	}
-// 	t.closeStream(s)
-// }
-
-// func (t *ssh2Server) handleSettings(f *http2.SettingsFrame) {
-// 	if f.IsAck() {
-// 		return
-// 	}
-// 	var ss []http2.Setting
-// 	f.ForeachSetting(func(s http2.Setting) error {
-// 		ss = append(ss, s)
-// 		return nil
-// 	})
-// 	// The settings will be applied once the ack is sent.
-// 	t.controlBuf.put(&settings{ack: true, ss: ss})
-// }
-
-// func (t *http2Server) handlePing(f *http2.PingFrame) {
-// 	t.controlBuf.put(&ping{true})
-// }
-
-// func (t *ssh2Server) handleWindowUpdate(f *http2.WindowUpdateFrame) {
-// 	id := f.Header().StreamID
-// 	incr := f.Increment
-// 	if id == 0 {
-// 		t.sendQuotaPool.add(int(incr))
-// 		return
-// 	}
-// 	if s, ok := t.getStream(f); ok {
-// 		s.sendQuotaPool.add(int(incr))
-// 	}
-// }
-
-// func (t *ssh2Server) writeHeaders(s *Stream, b *bytes.Buffer, endStream bool) error {
-// first := true
-// endHeaders := false
-// var err error
-// // Sends the headers in a single batch.
-// for !endHeaders {
-// 	size := t.hBuf.Len()
-// 	if size > http2MaxFrameLen {
-// 		size = http2MaxFrameLen
-// 	} else {
-// 		endHeaders = true
-// 	}
-// 	if first {
-// 		p := http2.HeadersFrameParam{
-// 			StreamID:      s.id,
-// 			BlockFragment: b.Next(size),
-// 			EndStream:     endStream,
-// 			EndHeaders:    endHeaders,
-// 		}
-// 		err = t.framer.writeHeaders(endHeaders, p)
-// 		first = false
-// 	} else {
-// 		err = t.framer.writeContinuation(endHeaders, s.id, endHeaders, b.Next(size))
-// 	}
-// 	if err != nil {
-// 		t.Close()
-// 		return ConnectionErrorf("transport: %v", err)
-// 	}
-// }
-// return nil
-// }
-
-// func (t *ssh2Server) applySettings(ss []http2.Setting) {
-// 	for _, s := range ss {
-// 		if s.ID == http2.SettingInitialWindowSize {
-// 			t.mu.Lock()
-// 			defer t.mu.Unlock()
-// 			for _, stream := range t.activeStreams {
-// 				stream.sendQuotaPool.reset(int(s.Val - t.streamSendQuota))
-// 			}
-// 			t.streamSendQuota = s.Val
-// 		}
-
-// 	}
-// }
-
-// // closeStream clears the footprint of a stream when the stream is not needed
-// // any more.
-// func (t *ssh2Server) closeStream(s *Stream) {
-// 	t.mu.Lock()
-// 	delete(t.activeStreams, s.id)
-// 	t.mu.Unlock()
-// 	if q := s.fc.restoreConn(); q > 0 {
-// 		t.controlBuf.put(&windowUpdate{0, q})
-// 	}
-// 	s.mu.Lock()
-// 	if s.state == streamDone {
-// 		s.mu.Unlock()
-// 		return
-// 	}
-// 	s.state = streamDone
-// 	s.mu.Unlock()
-// 	// In case stream sending and receiving are invoked in separate
-// 	// goroutines (e.g., bi-directional streaming), the caller needs
-// 	// to call cancel on the stream to interrupt the blocking on
-// 	// other goroutines.
-// 	s.cancel()
-// }
